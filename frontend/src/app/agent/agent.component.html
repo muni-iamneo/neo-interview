@@ -6,4 +6,8 @@
     <strong>Agent Responses</strong>
     <pre>{{ agentResponses() }}</pre>
   </div>
+  <button (click)="toggleMicStreaming()">
+    {{ isMicStreaming() ? 'Stop Microphone' : 'Start Microphone' }}
+  </button>
+  <hr>
 </div>

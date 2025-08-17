@@ -11,6 +11,7 @@ class AudioProcessor extends AudioWorkletProcessor {
       this.resampleRatio = this.sourceSampleRate / this.targetSampleRate;
       this.frameCounter = 0;
       this.lastLogTime = currentTime;
+      this.lastInputTime = currentTime;
       
       // Buffer for accumulating samples (helps with small frames)
       this.sampleBuffer = new Float32Array(0);
@@ -32,12 +33,20 @@ class AudioProcessor extends AudioWorkletProcessor {
   
     // Process audio data: downsample, convert to PCM16, send to main thread
     process(inputs, outputs, parameters) {
-      // Get input data (first channel of first input)
       const input = inputs[0];
+
+      // If no input, send silence to keep the connection alive
       if (!input || input.length === 0 || !input[0] || input[0].length === 0) {
-        return true; // Keep processor alive even with no input
+        if (currentTime - this.lastInputTime > 0.1) { // Send silence every 100ms
+          const silenceBuffer = new Float32Array(320); // 20ms @ 16kHz
+          const pcm16 = this.floatTo16BitPCM(silenceBuffer);
+          this.port.postMessage(pcm16, [pcm16.buffer]);
+          this.lastInputTime = currentTime;
+        }
+        return true; // Keep processor alive
       }
       
+      this.lastInputTime = currentTime;
       const inputData = input[0]; // First channel
       this.frameCounter++;
       
@@ -139,4 +148,3 @@ class AudioProcessor extends AudioWorkletProcessor {
   }
   
   registerProcessor('audio-processor', AudioProcessor);
-  
