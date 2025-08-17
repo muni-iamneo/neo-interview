@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, signal, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 
 @Component({
@@ -8,7 +8,7 @@ import { HttpClient } from '@angular/common/http';
   templateUrl: './agent.component.html',
   styleUrl: './agent.component.css'
 })
-export class AgentComponent implements OnInit {
+export class AgentComponent implements OnInit, OnDestroy {
   constructor(private http: HttpClient) {}
 
   private voiceWs: WebSocket | null = null;
@@ -22,7 +22,10 @@ export class AgentComponent implements OnInit {
   private meetingChunkCount = 0;
   private trackPollingInterval: any = null;
 
-  // Store JaaS connection details for reconnects
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordedChunks: Blob[] = [];
+
+  // Store JaaS connection details
   private jaasDomain: string = '';
   private jaasRoom: string = '';
   private jaasJwt: string = '';
@@ -56,6 +59,17 @@ export class AgentComponent implements OnInit {
     });
   }
 
+  ngOnDestroy(): void {
+    console.log('Destroying agent component, cleaning up resources...');
+    this.stopRecording();
+    if (this.trackPollingInterval) {
+      clearInterval(this.trackPollingInterval);
+    }
+    this.activeConference?.removeAllTracks();
+    this.activeConference?.leave();
+    this.voiceWs?.close();
+  }
+
   private waitForJitsiScripts(timeoutMs = 8000): Promise<void> {
     const start = performance.now();
     return new Promise((resolve, reject) => {
@@ -82,6 +96,7 @@ export class AgentComponent implements OnInit {
     this.jaasRoom = room;
     this.jaasJwt = jwt;
 
+    // Setup iframe
     const JitsiMeetExternalAPI = this.declareJaas();
     const parent = document.getElementById('jaas-iframe');
     if (JitsiMeetExternalAPI && parent) {
@@ -100,6 +115,7 @@ export class AgentComponent implements OnInit {
       });
     }
 
+    // Setup headless Jitsi
     const JitsiMeetJS = this.declareJitsi();
     if (!JitsiMeetJS) return console.error('lib-jitsi-meet not available');
 
@@ -113,23 +129,43 @@ export class AgentComponent implements OnInit {
     });
     JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.INFO);
 
+    const roomParts = room.split('/');
+    const isJaas = roomParts.length > 1;
+    const conferenceRoomName = isJaas ? roomParts[1] : room;
+    const jaasTenant = isJaas ? roomParts[0] : null;
+
+    if (!isJaas || !jaasTenant) {
+      console.error('❌ Invalid JaaS room format. Expected tenant/roomname.');
+      return;
+    }
+
     const options = {
-      hosts: { domain: '8x8.vc', muc: 'conference.8x8.vc' },
+      hosts: { domain: '8x8.vc', muc: `conference.${jaasTenant}.8x8.vc` },
       p2p: { enabled: false },
-      serviceUrl: `wss://8x8.vc/xmpp-websocket?room=${encodeURIComponent(room)}`,
-      clientNode: 'http://jitsi.org/jitsimeet',
+      serviceUrl: `wss://8x8.vc/${jaasTenant}/xmpp-websocket`,
+      clientNode: 'http://jitsi.org/jitsimeet'
     };
 
-    const bridgeJwt = await this.fetchBridgeJwt(room.split('/').pop(), jwt);
-    const connection = new JitsiMeetJS.JitsiConnection(null, bridgeJwt, options);
+    const connection = new JitsiMeetJS.JitsiConnection(null, null, options);
 
-    connection.on(JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED, () => {
+    connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED, () => {
       console.log('✅ Jitsi headless connection established');
-      const conference = connection.initJitsiConference(room, options);
+      const confOptions = { jwt: this.jaasJwt };
+      const conference = connection.initJitsiConference(conferenceRoomName, confOptions);
       this.activeConference = conference;
 
       conference.on(JitsiMeetJS.events.conference.CONFERENCE_JOINED, () => {
         console.log('✅ Jitsi headless conference joined');
+        JitsiMeetJS.createLocalTracks({ devices: ['audio'] })
+          .then((tracks: any[]) => {
+            const audioTrack = tracks.find(t => t.getType() === 'audio');
+            if (audioTrack) {
+              audioTrack.mute();
+              conference.addTrack(audioTrack);
+              console.log('🎤 Added silent local audio track to headless client.');
+            }
+          })
+          .catch((err: any) => console.error('Failed to add local track:', err));
         this.startPollingForTrack(conference);
       });
 
@@ -144,13 +180,15 @@ export class AgentComponent implements OnInit {
         if (this.activeRemoteTrackId && this.activeRemoteTrackId === track.getTrack()?.id) {
           console.log('🛑 Active track removed. Restarting polling.');
           this.activeRemoteTrackId = null;
+          this.stopRecording();
           this.startPollingForTrack(conference);
         }
       });
 
       conference.on(JitsiMeetJS.events.conference.USER_LEFT, (id: any, user: any) => {
         console.log(`[USER_LEFT] ${id} (${user.getDisplayName()})`);
-        if (this.activeRemoteTrackId && user.getTracks().some((t: any) => t.getTrack()?.id === this.activeRemoteTrackId)) {
+        const remoteTracks = user.getTracks();
+        if (this.activeRemoteTrackId && remoteTracks.some((t: any) => t.getTrack()?.id === this.activeRemoteTrackId)) {
           console.log('🎤 Tracked user left. Restarting polling.');
           this.activeRemoteTrackId = null;
           this.startPollingForTrack(conference);
@@ -163,7 +201,7 @@ export class AgentComponent implements OnInit {
       conference.join();
     });
 
-    connection.on(JitsiMeetJS.events.connection.CONNECTION_FAILED, (e: any) => console.error('Jitsi connection failed', e));
+    connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_FAILED, (e: any) => console.error('Jitsi connection failed', e));
     connection.connect();
   }
 
@@ -176,10 +214,14 @@ export class AgentComponent implements OnInit {
         this.trackPollingInterval = null;
         return;
       }
-      const audioTrack = conference.getRemoteTracks().find((t: any) => t.getType() === 'audio' && !t.isMuted());
-      if (audioTrack) {
-        console.log(`✅ Polling found active audio track: ${audioTrack.getId()}`);
-        this.handleRemoteTrack(audioTrack);
+      const participants = conference.getParticipants();
+      for (const p of participants) {
+        const audioTrack = p.getTracks().find((t: any) => t.getType() === 'audio' && !t.isMuted());
+        if (audioTrack) {
+          console.log(`✅ Polling found active audio track: ${audioTrack.getId()} from participant ${p.getId()}`);
+          this.handleRemoteTrack(audioTrack);
+          return;
+        }
       }
     }, 2500);
   }
@@ -191,38 +233,160 @@ export class AgentComponent implements OnInit {
     }
 
     const mediaTrack = track.getTrack();
-    if (!mediaTrack) return console.error('❌ No MediaStreamTrack found in Jitsi track.');
+    if (!mediaTrack || !mediaTrack.enabled || mediaTrack.readyState !== 'live') {
+      return console.error('❌ No enabled MediaStreamTrack found in Jitsi track.');
+    }
     if (this.activeRemoteTrackId === mediaTrack.id) return console.log(`ℹ️ Track ${mediaTrack.id} already active.`);
 
     console.log(`[handleRemoteTrack] Processing new track ${mediaTrack.id}`);
     this.activeRemoteTrackId = mediaTrack.id;
 
+    const stream = new MediaStream([mediaTrack]);
+    this.pipeStreamToAssembly(stream, 'meeting');
+    this.startRecording(stream);
+
+    // force stream to flow
     const hidden = document.createElement('audio');
     hidden.style.display = 'none';
     hidden.muted = true;
     hidden.autoplay = true;
-    hidden.onplaying = () => {
-      console.log(`✅🔊 Track ${mediaTrack.id} is playing. Starting capture.`);
-      this.pipeStreamToAssembly(new MediaStream([mediaTrack]), 'meeting');
-      hidden.onplaying = null;
-      document.body.removeChild(hidden);
-    };
-    hidden.onerror = (err) => {
-      console.error(`❌ Hidden audio element failed for track ${mediaTrack.id}:`, err);
-      document.body.removeChild(hidden);
-    };
     document.body.appendChild(hidden);
     track.attach(hidden);
+    setTimeout(() => {
+      if (document.body.contains(hidden)) {
+        document.body.removeChild(hidden);
+      }
+    }, 2000);
   }
 
-  private fetchBridgeJwt(roomSlug: string | undefined, fallback: string): Promise<string> {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(fallback), 1000);
-      this.http.post<any>('http://localhost:8000/jaas/jwt', { room: roomSlug, user: { name: 'AgentBridge' } }).subscribe({
-        next: (res) => { clearTimeout(timeout); resolve(res.jwt || fallback); },
-        error: () => { clearTimeout(timeout); resolve(fallback); }
-      });
-    });
+  private startRecording(stream: MediaStream) {
+    if (this.mediaRecorder) {
+      this.mediaRecorder.stop();
+    }
+    this.recordedChunks = [];
+    const options = { mimeType: 'audio/webm' };
+    this.mediaRecorder = new MediaRecorder(stream, options);
+    this.mediaRecorder.onstart = () => console.log('⏺️ Recorder started');
+
+    this.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        this.recordedChunks.push(event.data);
+      }
+    };
+
+    this.mediaRecorder.onstop = () => {
+      const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+      this.sendAudioChunk(blob);
+      this.recordedChunks = [];
+    };
+
+    this.mediaRecorder.start(3000); // 3s slices
+    console.log('⏺️ Started recording meeting audio.');
+  }
+
+  private stopRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      this.mediaRecorder.stop();
+      console.log('⏹️ Stopped recording meeting audio.');
+    }
+  }
+
+  private sendAudioChunk(chunk: Blob) {
+    if (this.voiceWs && this.voiceWs.readyState === WebSocket.OPEN) {
+      this.meetingChunkCount++;
+      console.log(`📦 Sending meeting chunk #${this.meetingChunkCount} to backend`);
+      this.voiceWs.send(chunk);
+    } else {
+      console.error('❌ WebSocket not open. Cannot send audio chunk.');
+    }
+  }
+
+  // ================= WebSocket ===================
+  private setupWebSockets(sessionId: string) {
+    this.voiceWs = new WebSocket(`ws://localhost:8000/agent/${sessionId}/voice`);
+    this.voiceWs.onopen = () => {
+      console.log('✅ Voice WebSocket connected');
+      this.agentResponses.update((t) => t + '[WS] Connected\n');
+      this.voiceWs?.send(JSON.stringify({ type: 'status' }));
+      setTimeout(() => {
+        if (this.meetingChunkCount === 0) {
+          this.voiceWs?.send(JSON.stringify({ type: 'force_start' }));
+          console.log('⚡ Force started conversation due to no audio.');
+        }
+      }, 5000);
+    };
+    this.voiceWs.onerror = (e) => {
+      console.error('❌ Voice WebSocket error:', e);
+      this.agentResponses.update((t) => t + '[ERR] WebSocket error\n');
+    };
+    this.voiceWs.onmessage = async (event) => {
+      if (event.data instanceof Blob) {
+        await this.injectAudioIntoJitsi(event.data);
+      } else {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'text_response') {
+            this.agentResponses.update((t) => t + data.text + '\n');
+          } else if (data.type === 'error') {
+            console.error('❌ Agent Error:', data.message);
+            this.agentResponses.update((t) => t + `[ERR] ${data.message}\n`);
+          }
+        } catch (e) {
+          console.error('Failed to parse message:', e);
+        }
+      }
+    };
+    this.voiceWs.onclose = (event) => {
+      console.log('🚪 Voice WebSocket closed:', event.reason);
+      this.agentResponses.update((t) => t + `[WS] Disconnected: ${event.reason}\n`);
+      this.wsStarted = false;
+    };
+  }
+
+  private async injectAudioIntoJitsi(audioBlob: Blob) {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      this.audioContext = new AudioContext();
+    }
+    await this.audioContext.resume();
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioContext.destination);
+      source.start();
+    } catch (error) {
+      console.error('❌ Web Audio API decoding failed:', error);
+    }
+  }
+
+  // ================= MIC ===================
+  async toggleMicStreaming() {
+    if (this.isMicStreaming()) {
+      this.stopMicStreaming();
+    } else {
+      await this.startMicStreaming();
+    }
+  }
+
+  private async startMicStreaming() {
+    if (this.isMicStreaming() || this.voiceWs?.readyState !== WebSocket.OPEN) return;
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.isMicStreaming.set(true);
+      console.log('🎤 Mic stream started');
+      this.pipeStreamToAssembly(this.micStream, 'mic');
+    } catch (err) {
+      console.error('❌ Failed to get mic stream:', err);
+    }
+  }
+
+  private stopMicStreaming() {
+    if (!this.isMicStreaming()) return;
+    this.micStream?.getTracks().forEach(track => track.stop());
+    this.isMicStreaming.set(false);
+    this.micWorkletNode?.disconnect();
+    console.log('🛑 Mic stream stopped');
   }
 
   private async pipeStreamToAssembly(stream: MediaStream, source: 'meeting' | 'mic') {
@@ -252,82 +416,5 @@ export class AgentComponent implements OnInit {
     } catch (e) {
       console.error('❌ AudioWorklet setup failed:', e);
     }
-  }
-
-  private setupWebSockets(sessionId: string) {
-    this.voiceWs = new WebSocket(`ws://localhost:8000/agent/${sessionId}/voice`);
-    this.voiceWs.onopen = () => {
-      console.log('✅ Voice WebSocket connected');
-      this.voiceWs?.send(JSON.stringify({ type: 'status' }));
-      setTimeout(() => {
-        if (this.meetingChunkCount === 0) {
-          this.voiceWs?.send(JSON.stringify({ type: 'force_start' }));
-          console.log('⚡ Force started conversation due to no audio.');
-        }
-      }, 5000);
-    };
-    this.voiceWs.onerror = (e) => console.error('❌ Voice WebSocket error:', e);
-    this.voiceWs.onmessage = async (event) => {
-      if (event.data instanceof Blob) {
-        await this.injectAudioIntoJitsi(event.data);
-      } else {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'text_response') {
-            this.agentResponses.update((t) => t + data.text + '\n');
-          } else if (data.type === 'error') {
-            console.error('❌ Agent Error:', data.message);
-            this.agentResponses.update((t) => t + `[ERR] ${data.message}\n`);
-          }
-        } catch (e) {
-          console.error('Failed to parse message:', e);
-        }
-      }
-    };
-  }
-
-  private async injectAudioIntoJitsi(audioBlob: Blob) {
-    if (!this.audioContext || this.audioContext.state === 'closed') {
-      this.audioContext = new AudioContext();
-    }
-    await this.audioContext.resume();
-    try {
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioContext.destination);
-      source.start();
-    } catch (error) {
-      console.error('❌ Web Audio API decoding failed:', error);
-    }
-  }
-
-  async toggleMicStreaming() {
-    if (this.isMicStreaming()) {
-      this.stopMicStreaming();
-    } else {
-      await this.startMicStreaming();
-    }
-  }
-
-  async startMicStreaming() {
-    if (this.isMicStreaming() || this.voiceWs?.readyState !== WebSocket.OPEN) return;
-    try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.isMicStreaming.set(true);
-      console.log('🎤 Mic stream started');
-      this.pipeStreamToAssembly(this.micStream, 'mic');
-    } catch (err) {
-      console.error('❌ Failed to get mic stream:', err);
-    }
-  }
-
-  stopMicStreaming() {
-    if (!this.isMicStreaming()) return;
-    this.micStream?.getTracks().forEach(track => track.stop());
-    this.isMicStreaming.set(false);
-    this.micWorkletNode?.disconnect();
-    console.log('🛑 Mic stream stopped');
   }
 }
