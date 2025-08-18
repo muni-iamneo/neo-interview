@@ -15,6 +15,7 @@ export class AgentComponent implements OnInit, OnDestroy {
   sessionId = 'testsession';
 
   agentResponses = signal<string>('');
+  hasValidSession = signal<boolean>(false);
   private audioContext: AudioContext | null = null;
   private wsStarted = false;
   private activeRemoteTrackId: string | null = null;
@@ -42,20 +43,18 @@ export class AgentComponent implements OnInit, OnDestroy {
         const raw = sessionStorage.getItem('jaasSession');
         if (raw) {
           const res = JSON.parse(raw);
+          console.log('✅ Using existing JaaS session from moderator:', res);
+          this.hasValidSession.set(true);
           this.joinJaas(res.domain, res.room, res.jwt);
           return;
         }
-      } catch {}
+      } catch (error) {
+        console.error('Failed to parse JaaS session from sessionStorage:', error);
+      }
 
-      this.http
-        .post<any>('http://localhost:8000/jaas/jwt', {
-          room: 'testroom',
-          user: { name: 'Agent' },
-        })
-        .subscribe({
-          next: (res) => this.joinJaas(res.domain, res.room, res.jwt),
-          error: (err) => console.error('Agent JWT fetch failed', err),
-        });
+      // If no session exists, show error instead of creating new JWT
+      console.error('❌ No JaaS session found. Please start from the moderator page first.');
+      console.log('🔧 Expected workflow: Moderator creates session → Opens agent in new tab');
     });
   }
 
@@ -95,25 +94,8 @@ export class AgentComponent implements OnInit, OnDestroy {
     this.jaasDomain = domain;
     this.jaasRoom = room;
     this.jaasJwt = jwt;
-
-    // Setup iframe
-    const JitsiMeetExternalAPI = this.declareJaas();
-    const parent = document.getElementById('jaas-iframe');
-    if (JitsiMeetExternalAPI && parent) {
-      const api = new JitsiMeetExternalAPI('8x8.vc', {
-        roomName: room,
-        parentNode: parent,
-        jwt,
-        configOverwrite: { prejoinPageEnabled: true, p2p: { enabled: false } },
-      });
-      api.addEventListener('videoConferenceJoined', () => {
-        console.log('iframe: joined');
-        if (!this.wsStarted) {
-          this.wsStarted = true;
-          this.setupWebSockets(this.sessionId);
-        }
-      });
-    }
+  // Setup iframe (may run before *conditional* template block renders, so retry)
+  this.setupIframeWithRetry(room, jwt, 20, 150);
 
     // Setup headless Jitsi
     const JitsiMeetJS = this.declareJitsi();
@@ -142,17 +124,26 @@ export class AgentComponent implements OnInit, OnDestroy {
     const options = {
       hosts: { domain: '8x8.vc', muc: `conference.${jaasTenant}.8x8.vc` },
       p2p: { enabled: false },
-      serviceUrl: `wss://8x8.vc/${jaasTenant}/xmpp-websocket`,
+      // Include the room as a query param (required in some JaaS deployments for lobby/auth routing)
+      serviceUrl: `wss://8x8.vc/${jaasTenant}/xmpp-websocket?room=${encodeURIComponent(conferenceRoomName)}`,
       clientNode: 'http://jitsi.org/jitsimeet'
     };
 
-    const connection = new JitsiMeetJS.JitsiConnection(null, null, options);
+    console.log('🔧 Jitsi connection options:', options);
+    // IMPORTANT: For JaaS the JWT must be supplied when creating the JitsiConnection.
+    // Passing it only in initJitsiConference causes a notAllowed presence error.
+    const connection = new JitsiMeetJS.JitsiConnection(null, jwt, options);
 
     connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED, () => {
       console.log('✅ Jitsi headless connection established');
-      const confOptions = { jwt: this.jaasJwt };
-      const conference = connection.initJitsiConference(conferenceRoomName, confOptions);
+      
+  // JWT already provided at connection level; do NOT re-pass here (can trigger auth issues)
+  const confOptions = { }; // keep empty unless specific config needed
+  console.log('🔧 Creating conference with options:', { roomName: conferenceRoomName, options: confOptions });
+  const conference = connection.initJitsiConference(conferenceRoomName, confOptions);
       this.activeConference = conference;
+      
+      console.log('🚀 Conference object created, setting up event listeners...');
 
       conference.on(JitsiMeetJS.events.conference.CONFERENCE_JOINED, () => {
         console.log('✅ Jitsi headless conference joined');
@@ -195,14 +186,76 @@ export class AgentComponent implements OnInit, OnDestroy {
         }
       });
 
-      conference.on(JitsiMeetJS.events.conference.CONFERENCE_FAILED, (err: any) => console.error('❌ CONFERENCE_FAILED', err));
-      conference.on(JitsiMeetJS.events.conference.CONFERENCE_ERROR, (err: any) => console.error('❌ CONFERENCE_ERROR', err));
+      conference.on(JitsiMeetJS.events.conference.CONFERENCE_FAILED, (err: any) => {
+        console.error('❌ CONFERENCE_FAILED', err);
+        console.error('Conference failed details:', JSON.stringify(err, null, 2));
+      });
+      
+      conference.on(JitsiMeetJS.events.conference.CONFERENCE_ERROR, (err: any) => {
+        console.error('❌ CONFERENCE_ERROR', err);
+        console.error('Conference error details:', JSON.stringify(err, null, 2));
+      });
 
+      // Add additional event listeners for debugging
+      conference.on(JitsiMeetJS.events.conference.CONNECTION_ESTABLISHED, () => {
+        console.log('🔗 Conference connection established');
+      });
+
+      conference.on(JitsiMeetJS.events.conference.CONNECTION_INTERRUPTED, () => {
+        console.log('⚠️ Conference connection interrupted');
+      });
+
+      conference.on(JitsiMeetJS.events.conference.CONNECTION_RESTORED, () => {
+        console.log('🔄 Conference connection restored');
+      });
+
+      console.log('🎯 Attempting to join conference...');
       conference.join();
     });
 
     connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_FAILED, (e: any) => console.error('Jitsi connection failed', e));
     connection.connect();
+  }
+
+  private setupIframeWithRetry(room: string, jwt: string, attempts: number, delayMs: number) {
+    const JitsiMeetExternalAPI = this.declareJaas();
+    const parent = document.getElementById('jaas-iframe');
+    if (!JitsiMeetExternalAPI) {
+      console.warn('🕒 JitsiMeetExternalAPI not yet present, retrying...');
+      if (attempts > 0) setTimeout(() => this.setupIframeWithRetry(room, jwt, attempts - 1, delayMs), delayMs);
+      return;
+    }
+    if (!parent) {
+      // This is the most likely reason the UI was not loading before.
+      console.warn('🕒 Iframe container #jaas-iframe not yet in DOM (Angular conditional not rendered). Retrying...');
+      if (attempts > 0) setTimeout(() => this.setupIframeWithRetry(room, jwt, attempts - 1, delayMs), delayMs);
+      else console.error('❌ Failed to find #jaas-iframe container after retries; Jitsi UI will not render.');
+      return;
+    }
+    if (parent.childElementCount > 0) {
+      console.log('ℹ️ Jitsi iframe already initialized. Skipping duplicate init.');
+      return;
+    }
+    console.log('🎬 Initializing Jitsi iframe UI');
+    try {
+      const api = new JitsiMeetExternalAPI('8x8.vc', {
+        roomName: room,
+        parentNode: parent,
+        jwt,
+        configOverwrite: { prejoinPageEnabled: true, p2p: { enabled: false } },
+      });
+      api.addEventListener('videoConferenceJoined', () => {
+        console.log('✅ iframe: videoConferenceJoined');
+        if (!this.wsStarted) {
+          this.wsStarted = true;
+            this.setupWebSockets(this.sessionId);
+        }
+      });
+      api.addEventListener('videoConferenceLeft', () => console.log('iframe: left'));
+      api.addEventListener('errorOccurred', (e: any) => console.error('iframe error', e));
+    } catch (e) {
+      console.error('❌ Failed to initialize Jitsi iframe:', e);
+    }
   }
 
   private startPollingForTrack(conference: any) {

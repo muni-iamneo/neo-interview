@@ -1,13 +1,24 @@
 <div>
   <h3>Agent</h3>
-  <div id="jaas-iframe" style="height: 60vh; margin-bottom:12px; border:1px solid #eee;"></div>
-  <!-- Mic controls removed: meeting audio only -->
-  <div>
-    <strong>Agent Responses</strong>
-    <pre>{{ agentResponses() }}</pre>
-  </div>
-  <button (click)="toggleMicStreaming()">
-    {{ isMicStreaming() ? 'Stop Microphone' : 'Start Microphone' }}
-  </button>
+  
+  @if (!hasValidSession()) {
+    <div style="padding: 20px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; margin-bottom: 20px;">
+      <h4>⚠️ No Active Session</h4>
+      <p>Please start from the <a href="/moderator">Moderator page</a> first.</p>
+      <p>The moderator will create a session and open this page automatically.</p>
+    </div>
+  }
+  
+  @if (hasValidSession()) {
+    <div id="jaas-iframe" style="height: 60vh; margin-bottom:12px; border:1px solid #eee;"></div>
+    <!-- Mic controls removed: meeting audio only -->
+    <div>
+      <strong>Agent Responses</strong>
+      <pre>{{ agentResponses() }}</pre>
+    </div>
+    <button (click)="toggleMicStreaming()">
+      {{ isMicStreaming() ? 'Stop Microphone' : 'Start Microphone' }}
+    </button>
+  }
   <hr>
 </div>
