@@ -22,6 +22,7 @@ export class AgentComponent implements OnInit, OnDestroy {
   private activeConference: any = null;
   private meetingChunkCount = 0;
   private trackPollingInterval: any = null;
+  private pendingAudioChunks: Blob[] = []; // buffer when WS not yet open
 
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
@@ -36,6 +37,8 @@ export class AgentComponent implements OnInit, OnDestroy {
   private micStream: MediaStream | null = null;
   private micWorkletNode: AudioWorkletNode | null = null;
   private micChunkCount = 0;
+  // Playback scheduling for raw PCM agent audio
+  private nextPlaybackTime = 0;
 
   ngOnInit(): void {
     this.waitForJitsiScripts().then(() => {
@@ -147,6 +150,11 @@ export class AgentComponent implements OnInit, OnDestroy {
 
       conference.on(JitsiMeetJS.events.conference.CONFERENCE_JOINED, () => {
         console.log('✅ Jitsi headless conference joined');
+        // Ensure voice websocket is up as early as possible (was previously only after iframe join)
+        if (!this.wsStarted) {
+          this.wsStarted = true;
+          this.setupWebSockets(this.sessionId);
+        }
         JitsiMeetJS.createLocalTracks({ devices: ['audio'] })
           .then((tracks: any[]) => {
             const audioTrack = tracks.find(t => t.getType() === 'audio');
@@ -350,7 +358,8 @@ export class AgentComponent implements OnInit, OnDestroy {
       console.log(`📦 Sending meeting chunk #${this.meetingChunkCount} to backend`);
       this.voiceWs.send(chunk);
     } else {
-      console.error('❌ WebSocket not open. Cannot send audio chunk.');
+  console.warn('⏳ WebSocket not open. Buffering meeting audio chunk.');
+  this.pendingAudioChunks.push(chunk);
     }
   }
 
@@ -361,6 +370,13 @@ export class AgentComponent implements OnInit, OnDestroy {
       console.log('✅ Voice WebSocket connected');
       this.agentResponses.update((t) => t + '[WS] Connected\n');
       this.voiceWs?.send(JSON.stringify({ type: 'status' }));
+      // Flush any buffered chunks
+      while (this.pendingAudioChunks.length && this.voiceWs?.readyState === WebSocket.OPEN) {
+        const c = this.pendingAudioChunks.shift()!;
+        this.meetingChunkCount++;
+        console.log(`🚚 Flushing buffered chunk (#${this.meetingChunkCount})`);
+        this.voiceWs.send(c);
+      }
       setTimeout(() => {
         if (this.meetingChunkCount === 0) {
           this.voiceWs?.send(JSON.stringify({ type: 'force_start' }));
@@ -397,19 +413,47 @@ export class AgentComponent implements OnInit, OnDestroy {
   }
 
   private async injectAudioIntoJitsi(audioBlob: Blob) {
-    if (!this.audioContext || this.audioContext.state === 'closed') {
-      this.audioContext = new AudioContext();
-    }
-    await this.audioContext.resume();
+    // ElevenLabs bridge sends raw PCM16 mono @16kHz (not a WAV/encoded container),
+    // so decodeAudioData() fails with EncodingError. We manually wrap into an AudioBuffer
+    // and schedule playback to avoid gaps.
     try {
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new AudioContext();
+      }
+      await this.audioContext.resume();
+
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioContext.destination);
-      source.start();
+      if (arrayBuffer.byteLength === 0) {
+        console.warn('⚠️ Received empty agent audio chunk');
+        return;
+      }
+      if (arrayBuffer.byteLength % 2 !== 0) {
+        console.warn('⚠️ Odd-length PCM chunk, padding one byte');
+      }
+      const pcm16 = new Int16Array(arrayBuffer.slice(0, arrayBuffer.byteLength - (arrayBuffer.byteLength % 2)));
+      const sampleRate = 16000; // ElevenLabs ConvAI returns 16 kHz PCM
+      const audioBuffer = this.audioContext.createBuffer(1, pcm16.length, sampleRate);
+      const channel = audioBuffer.getChannelData(0);
+      for (let i = 0; i < pcm16.length; i++) {
+        channel[i] = pcm16[i] / 32768; // convert to float32 [-1,1]
+      }
+
+      // Schedule sequentially to maintain continuity
+      if (this.nextPlaybackTime < this.audioContext.currentTime) {
+        this.nextPlaybackTime = this.audioContext.currentTime;
+      }
+      const src = this.audioContext.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(this.audioContext.destination);
+      src.start(this.nextPlaybackTime);
+      const duration = audioBuffer.duration;
+      this.nextPlaybackTime += duration;
+      // Debug log occasionally
+      if (Math.random() < 0.1) {
+        console.log(`🔊 Queued agent audio chunk len=${pcm16.length} samples (${(duration*1000).toFixed(1)}ms) start=${this.nextPlaybackTime.toFixed(3)}`);
+      }
     } catch (error) {
-      console.error('❌ Web Audio API decoding failed:', error);
+      console.error('❌ Failed to play raw PCM agent audio:', error);
     }
   }
 
@@ -454,7 +498,13 @@ export class AgentComponent implements OnInit, OnDestroy {
     if (!this.audioContext.audioWorklet) return console.error('❌ AudioWorklet not supported.');
 
     try {
-      await this.audioContext.audioWorklet.addModule('/audio/audio-processor.js');
+      try {
+        await this.audioContext.audioWorklet.addModule('/audio/audio-processor.js');
+      } catch (primaryErr) {
+        // Fallback path if asset mapping differs in dev build
+        console.warn('⚠️ Primary worklet path failed, retrying root /audio-processor.js', primaryErr);
+        await this.audioContext.audioWorklet.addModule('/audio-processor.js');
+      }
       const workletNode = new AudioWorkletNode(this.audioContext, 'audio-processor', {
         processorOptions: { sourceSampleRate: this.audioContext.sampleRate }
       });
