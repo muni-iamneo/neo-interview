@@ -16,9 +16,14 @@
       <strong>Agent Responses</strong>
       <pre>{{ agentResponses() }}</pre>
     </div>
-    <button (click)="toggleMicStreaming()">
-      {{ isMicStreaming() ? 'Stop Microphone' : 'Start Microphone' }}
-    </button>
+    <div style="margin: 10px 0;">
+      <button (click)="enableAudio()" style="margin-right: 10px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        🎧 Enable Audio
+      </button>
+      <button (click)="toggleMicStreaming()">
+        {{ isMicStreaming() ? 'Stop Microphone' : 'Start Microphone' }}
+      </button>
+    </div>
   }
   <hr>
 </div>

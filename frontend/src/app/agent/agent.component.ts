@@ -39,6 +39,14 @@ export class AgentComponent implements OnInit, OnDestroy {
   private micChunkCount = 0;
   // Playback scheduling for raw PCM agent audio
   private nextPlaybackTime = 0;
+  // Agent synthesized audio injection
+  private agentPlaybackContext: AudioContext | null = null;
+  private agentOutDest: MediaStreamAudioDestinationNode | null = null;
+  private agentAudioTrack: MediaStreamTrack | null = null; // Track for ElevenLabs audio
+  private agentAudioSender: RTCRtpSender | null = null; // Sender for agent audio track
+  private audioContextsResumed = false; // Track if audio contexts have been resumed
+  private placeholderJitsiAudioTrack: any | null = null; // Pre-allocates audio transceiver
+  private agentTrackInjected = false; // Ensure we only add/replace once
 
   ngOnInit(): void {
     this.waitForJitsiScripts().then(() => {
@@ -67,6 +75,27 @@ export class AgentComponent implements OnInit, OnDestroy {
     if (this.trackPollingInterval) {
       clearInterval(this.trackPollingInterval);
     }
+    
+    // Clean up agent audio track
+    if (this.agentAudioTrack && this.activeConference) {
+      try {
+        this.activeConference.removeTrack(this.agentAudioTrack);
+        console.log('🎤 Removed agent audio track from conference');
+      } catch (e) {
+        console.warn('⚠️ Error removing agent audio track:', e);
+      }
+    }
+    // Clean up placeholder audio track
+    if (this.placeholderJitsiAudioTrack && this.activeConference) {
+      try {
+        this.activeConference.removeTrack(this.placeholderJitsiAudioTrack);
+        console.log('🧹 Removed placeholder audio track from conference');
+      } catch (e) {
+        console.warn('⚠️ Error removing placeholder audio track:', e);
+      }
+      this.placeholderJitsiAudioTrack = null;
+    }
+    
     this.activeConference?.removeAllTracks();
     this.activeConference?.leave();
     this.voiceWs?.close();
@@ -155,16 +184,11 @@ export class AgentComponent implements OnInit, OnDestroy {
           this.wsStarted = true;
           this.setupWebSockets(this.sessionId);
         }
-        JitsiMeetJS.createLocalTracks({ devices: ['audio'] })
-          .then((tracks: any[]) => {
-            const audioTrack = tracks.find(t => t.getType() === 'audio');
-            if (audioTrack) {
-              audioTrack.mute();
-              conference.addTrack(audioTrack);
-              console.log('🎤 Added silent local audio track to headless client.');
-            }
-          })
-          .catch((err: any) => console.error('Failed to add local track:', err));
+        // Pre-allocate an audio transceiver with a silent placeholder local track
+        this.ensurePlaceholderAudioTrack().catch(err => {
+          console.warn('⚠️ Failed to create placeholder audio track (will try direct injection):', err);
+        });
+        console.log('🎤 Placeholder audio track will pre-allocate the sender/transceiver');
         this.startPollingForTrack(conference);
       });
 
@@ -413,49 +437,272 @@ export class AgentComponent implements OnInit, OnDestroy {
   }
 
   private async injectAudioIntoJitsi(audioBlob: Blob) {
-    // ElevenLabs bridge sends raw PCM16 mono @16kHz (not a WAV/encoded container),
-    // so decodeAudioData() fails with EncodingError. We manually wrap into an AudioBuffer
-    // and schedule playback to avoid gaps.
+    // Convert raw PCM16 (16k) to playable buffer and inject into conference mix.
     try {
-      if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new AudioContext();
+      if (!this.agentPlaybackContext || this.agentPlaybackContext.state === 'closed') {
+        this.agentPlaybackContext = new AudioContext({ sampleRate: 48000 });
+        this.agentOutDest = this.agentPlaybackContext.createMediaStreamDestination();
+        console.log('🎧 Created agent playback context (48k) and destination node');
       }
-      await this.audioContext.resume();
+      
+      // Resume audio context if not already resumed
+      await this.resumeAudioContexts();
 
       const arrayBuffer = await audioBlob.arrayBuffer();
-      if (arrayBuffer.byteLength === 0) {
-        console.warn('⚠️ Received empty agent audio chunk');
-        return;
-      }
-      if (arrayBuffer.byteLength % 2 !== 0) {
-        console.warn('⚠️ Odd-length PCM chunk, padding one byte');
-      }
+      if (arrayBuffer.byteLength === 0) return;
+      if (arrayBuffer.byteLength % 2 !== 0) console.warn('⚠️ Odd-length PCM chunk');
       const pcm16 = new Int16Array(arrayBuffer.slice(0, arrayBuffer.byteLength - (arrayBuffer.byteLength % 2)));
-      const sampleRate = 16000; // ElevenLabs ConvAI returns 16 kHz PCM
-      const audioBuffer = this.audioContext.createBuffer(1, pcm16.length, sampleRate);
-      const channel = audioBuffer.getChannelData(0);
-      for (let i = 0; i < pcm16.length; i++) {
-        channel[i] = pcm16[i] / 32768; // convert to float32 [-1,1]
-      }
 
-      // Schedule sequentially to maintain continuity
-      if (this.nextPlaybackTime < this.audioContext.currentTime) {
-        this.nextPlaybackTime = this.audioContext.currentTime;
+      // Upsample 16k -> 48k (simple 3x duplication). For higher quality implement linear or polyphase later.
+      const upsampled = new Float32Array(pcm16.length * 3);
+      for (let i = 0; i < pcm16.length; i++) {
+        const v = pcm16[i] / 32768;
+        const o = i * 3;
+        upsampled[o] = v; upsampled[o + 1] = v; upsampled[o + 2] = v;
       }
-      const src = this.audioContext.createBufferSource();
-      src.buffer = audioBuffer;
-      src.connect(this.audioContext.destination);
+      const buffer = this.agentPlaybackContext.createBuffer(1, upsampled.length, 48000);
+      buffer.copyToChannel(upsampled, 0);
+
+      if (this.nextPlaybackTime < this.agentPlaybackContext.currentTime) {
+        this.nextPlaybackTime = this.agentPlaybackContext.currentTime;
+      }
+      const src = this.agentPlaybackContext.createBufferSource();
+      src.buffer = buffer;
+      // Local monitor
+      src.connect(this.agentPlaybackContext.destination);
+      // Mix to destination for conference injection
+      if (this.agentOutDest) src.connect(this.agentOutDest);
       src.start(this.nextPlaybackTime);
-      const duration = audioBuffer.duration;
+      const duration = buffer.duration;
       this.nextPlaybackTime += duration;
-      // Debug log occasionally
-      if (Math.random() < 0.1) {
-        console.log(`🔊 Queued agent audio chunk len=${pcm16.length} samples (${(duration*1000).toFixed(1)}ms) start=${this.nextPlaybackTime.toFixed(3)}`);
+      
+      // NEW: Properly inject audio into conference for other participants
+      if (!this.agentTrackInjected) {
+        this.injectAgentAudioIntoConference();
       }
-    } catch (error) {
-      console.error('❌ Failed to play raw PCM agent audio:', error);
+      
+      if (Math.random() < 0.1) console.log(`🔊 Agent chunk queued (${(duration*1000).toFixed(1)} ms) next=${this.nextPlaybackTime.toFixed(3)}`);
+    } catch (e) {
+      console.error('❌ Agent audio injection/playback failed:', e);
     }
   }
+
+  private injectAgentAudioIntoConference() {
+    if (!this.activeConference || !this.agentOutDest) {
+      console.warn('⚠️ Cannot inject audio: conference or destination not ready');
+      return;
+    }
+
+    try {
+      // Get the audio track from the destination stream
+      const destTrack = this.agentOutDest.stream.getAudioTracks()[0];
+      if (!destTrack) {
+        console.warn('⚠️ No audio track in destination stream');
+        return;
+      }
+
+      // If we already have an agent audio track, replace it
+      if (this.agentAudioTrack && this.agentAudioSender) {
+        console.log('🔄 Replacing existing agent audio track');
+        this.agentAudioSender.replaceTrack(destTrack).catch(err => {
+          console.error('❌ Failed to replace agent audio track:', err);
+        });
+        return;
+      }
+
+      // Create a new audio track and add/replace into the conference
+      console.log('🎤 Adding new agent audio track to conference');
+      this.agentAudioTrack = destTrack;
+      
+      // Ensure the track is enabled
+      this.agentAudioTrack.enabled = true;
+      
+  // Create a comprehensive track wrapper that mimics Jitsi's track interface (only once)
+      const myId = (this.activeConference && typeof this.activeConference.myUserId === 'function')
+        ? this.activeConference.myUserId()
+        : 'agent';
+      let storedSourceName = `${myId}-a0`;
+      const customTrack = {
+        // Basic track methods
+        getType: () => 'audio',
+        getTrack: () => destTrack,
+        isLocal: () => true,
+        isMuted: () => false,
+        setMute: (muted: boolean) => {
+          destTrack.enabled = !muted;
+        },
+        
+  // Video-related methods (required by Jitsi even for audio tracks) - must match placeholder (null)
+  getVideoType: () => null,
+        getSourceName: () => storedSourceName,
+        getSourceType: () => 'audio',
+        setSourceName: (name: string) => {
+          storedSourceName = name;
+          console.log('🔧 Setting source name to:', name);
+        },
+        
+        // Additional Jitsi track methods
+        getId: () => destTrack.id,
+        getKind: () => destTrack.kind,
+        getLabel: () => destTrack.label,
+        getSettings: () => destTrack.getSettings ? destTrack.getSettings() : {},
+        getCapabilities: () => destTrack.getCapabilities ? destTrack.getCapabilities() : {},
+        
+        // Track state methods
+        getReadyState: () => destTrack.readyState,
+        getEnabled: () => destTrack.enabled,
+        
+        // Track type checking methods (required by Jitsi)
+        isAudioTrack: () => true,
+        isVideoTrack: () => false,
+        
+        // Additional Jitsi methods that might be called
+        getSSRC: () => undefined,
+        getMSID: () => undefined,
+        getStreamId: () => destTrack.id,
+        getTrackId: () => destTrack.id,
+        
+        // Event handling (empty implementations)
+        on: () => {},
+        off: () => {},
+        emit: () => {},
+        
+        // Additional Jitsi methods that might be called
+        getDeviceId: () => undefined,
+        getFacingMode: () => undefined,
+        getStream: () => new MediaStream([destTrack]),
+        
+        // Track disposal
+        dispose: () => {
+          destTrack.stop();
+        }
+      };
+
+      // If we have a placeholder local track, replace it to reuse the same transceiver/sender
+  if (this.placeholderJitsiAudioTrack) {
+        console.log('🔁 Replacing placeholder local track with agent audio');
+        try {
+          this.activeConference.replaceTrack(this.placeholderJitsiAudioTrack, customTrack)
+            .then(() => {
+              console.log('✅ Placeholder replaced with agent track');
+              this.placeholderJitsiAudioTrack = null;
+              this.findAndStoreAgentAudioSender();
+      this.agentTrackInjected = true;
+            })
+            .catch((err: any) => {
+              console.error('❌ Failed to replace placeholder track:', err);
+            });
+        } catch (reErr) {
+          console.error('❌ Replace placeholder threw:', reErr);
+        }
+      } else {
+        // Otherwise add the track normally
+    this.activeConference.addTrack(customTrack);
+        // Store the sender for future track replacements
+        this.findAndStoreAgentAudioSender();
+    this.agentTrackInjected = true;
+      }
+      
+      console.log('✅ Agent audio track successfully added to conference');
+      if (this.agentAudioTrack) {
+        console.log('🔊 Track details:', {
+          id: this.agentAudioTrack.id,
+          kind: this.agentAudioTrack.kind,
+          enabled: this.agentAudioTrack.enabled,
+          readyState: this.agentAudioTrack.readyState
+        });
+      }
+      
+    } catch (e) {
+      console.error('❌ Failed to inject agent audio into conference:', e);
+    }
+  }
+
+  // Create and add a muted placeholder Jitsi local audio track to allocate the audio transceiver
+  private async ensurePlaceholderAudioTrack(): Promise<void> {
+    if (!this.activeConference || this.placeholderJitsiAudioTrack) return;
+    try {
+      const JitsiMeetJS = this.declareJitsi();
+      if (!JitsiMeetJS) return;
+      const tracks: any[] = await JitsiMeetJS.createLocalTracks({ devices: ['audio'] });
+      const audioTrack = tracks.find(t => t.getType && t.getType() === 'audio');
+      if (!audioTrack) return;
+      // Mute it to avoid capturing user mic audio
+      if (typeof audioTrack.setMute === 'function') {
+        await audioTrack.setMute(true);
+      } else if (typeof audioTrack.mute === 'function') {
+        await audioTrack.mute();
+      }
+      await this.activeConference.addTrack(audioTrack);
+      this.placeholderJitsiAudioTrack = audioTrack;
+      console.log('✅ Placeholder audio track added to allocate sender/transceiver');
+    } catch (e) {
+      console.warn('⚠️ ensurePlaceholderAudioTrack failed:', e);
+    }
+  }
+
+  private findAndStoreAgentAudioSender() {
+    if (!this.activeConference || !this.agentAudioTrack) return;
+    
+    try {
+      // Look for the RTCRtpSender that was created when we added the track
+      const rtc = this.activeConference.rtc || (this.activeConference.getRTC && this.activeConference.getRTC());
+      if (!rtc) return;
+      
+      const containers = rtc.peerConnections || rtc._peerConnections || rtc._peerConnectionsMap || {};
+      const pcHolders = Object.values(containers);
+      
+      for (const holder of pcHolders) {
+        const h: any = holder as any;
+        const pc: RTCPeerConnection | undefined = h && (h.peerconnection || h.pc || h._pc);
+        if (!pc) continue;
+        
+        const senders = pc.getSenders();
+        for (const sender of senders) {
+          if (sender.track && sender.track.id === this.agentAudioTrack.id) {
+            this.agentAudioSender = sender;
+            console.log('🔗 Found agent audio RTCRtpSender:', sender.track.id);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error finding agent audio sender:', err);
+    }
+  }
+
+  private async resumeAudioContexts(): Promise<void> {
+    if (this.audioContextsResumed) {
+      return;
+    }
+
+    try {
+      // Resume agent playback context
+      if (this.agentPlaybackContext && this.agentPlaybackContext.state === 'suspended') {
+        await this.agentPlaybackContext.resume();
+        console.log('🎧 Agent playback context resumed');
+      }
+
+      // Resume main audio context
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+        console.log('🎧 Main audio context resumed');
+      }
+
+      this.audioContextsResumed = true;
+      console.log('✅ All audio contexts resumed successfully');
+    } catch (error) {
+      console.error('❌ Failed to resume audio contexts:', error);
+    }
+  }
+
+  // Public method to enable audio (called from template button)
+  async enableAudio(): Promise<void> {
+    console.log('🎧 User clicked Enable Audio button');
+    await this.resumeAudioContexts();
+  }
+
+
 
   // ================= MIC ===================
   async toggleMicStreaming() {
@@ -490,7 +737,9 @@ export class AgentComponent implements OnInit, OnDestroy {
     console.log(`🔄 Setting up audio pipeline for ${source}...`);
     try { await this.audioContext?.close(); } catch {}
     this.audioContext = new AudioContext({ sampleRate: 48000 });
-    await this.audioContext.resume();
+    
+    // Resume audio context if not already resumed
+    await this.resumeAudioContexts();
 
     if (stream.getAudioTracks().length === 0) return console.error(`❌ No audio tracks in ${source} stream.`);
 
