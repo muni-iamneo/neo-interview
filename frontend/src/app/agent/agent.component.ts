@@ -468,9 +468,7 @@ export class AgentComponent implements OnInit, OnDestroy {
       }
       const src = this.agentPlaybackContext.createBufferSource();
       src.buffer = buffer;
-      // Local monitor
-      src.connect(this.agentPlaybackContext.destination);
-      // Mix to destination for conference injection
+      // Only connect to destination for conference injection (no local playback)
       if (this.agentOutDest) src.connect(this.agentOutDest);
       src.start(this.nextPlaybackTime);
       const duration = buffer.duration;
