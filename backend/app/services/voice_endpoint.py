@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
 Integrated Voice Endpoint for Jitsi + ElevenLabs
-Replaces AssemblyAI transcription with direct voice conversation
+Handles WebSocket connections and voice session management
 """
 
 import asyncio
 import json
-import base64
+import math
 import time
 from typing import Dict, Optional
 from fastapi import WebSocket, WebSocketDisconnect
-import os
-from dotenv import load_dotenv
 
-# Import our voice handler
-from elevenlabs_voice_handler import JitsiElevenLabsBridge
+# Import configuration and logging
+from ..core.config import get_settings
+from ..core.logging_config import get_logger
 
-load_dotenv()
+# Import services
+from .cleanup_service import get_cleanup_service
+from .elevenlabs_service import JitsiElevenLabsBridge
+
+# Initialize settings and logger
+settings = get_settings()
+logger = get_logger(__name__)
+cleanup_service = get_cleanup_service()
 
 class IntegratedVoiceSession:
     """Manages a single voice conversation session"""
@@ -27,19 +33,17 @@ class IntegratedVoiceSession:
         self.bridge: Optional[JitsiElevenLabsBridge] = None
         self.is_active = False
         self.audio_buffer = bytearray()
-        self.chunk_size = 1024  # Audio chunk size in bytes
+        self.chunk_size = settings.AUDIO_CHUNK_SIZE
         # VAD tracking before conversation start
         self._pre_start_chunks = 0
         self._rms_accum = 0.0
         self._rms_samples = 0
         
-    async def initialize(self):
+    async def initialize(self) -> bool:
         """Initialize the voice conversation"""
         try:
-            api_key = os.getenv("ELEVENLABS_API_KEY")
-            agent_id = os.getenv("ELEVENLABS_AGENT_ID")
-            
-            if not api_key or not agent_id:
+            if not settings.ELEVENLABS_API_KEY or not settings.ELEVENLABS_AGENT_ID:
+                logger.error("[Session %s] Missing ElevenLabs configuration", self.session_id)
                 await self.websocket.send_json({
                     "type": "error",
                     "message": "Missing ElevenLabs configuration"
@@ -47,7 +51,10 @@ class IntegratedVoiceSession:
                 return False
             
             # Create bridge
-            self.bridge = JitsiElevenLabsBridge(api_key, agent_id)
+            self.bridge = JitsiElevenLabsBridge(
+                settings.ELEVENLABS_API_KEY,
+                settings.ELEVENLABS_AGENT_ID
+            )
             
             # Register callbacks
             self.bridge.register_audio_callback(self._on_audio_response)
@@ -56,14 +63,14 @@ class IntegratedVoiceSession:
             
             # Initialize
             if not await self.bridge.initialize():
+                logger.error("[Session %s] Failed to connect to ElevenLabs", self.session_id)
                 await self.websocket.send_json({
                     "type": "error",
                     "message": "Failed to connect to ElevenLabs"
                 })
                 return False
             
-            # Do NOT start conversation yet. We now wait for real speech (VAD) before
-            # calling start_conversation() to avoid unsolicited greeting.
+            # Wait for speech (VAD) before starting conversation
             self.is_active = True
             await self.websocket.send_json({
                 "type": "status",
@@ -72,11 +79,11 @@ class IntegratedVoiceSession:
                 "started": False
             })
 
-            print(f"[Session {self.session_id}] Voice bridge ready (awaiting speech to start agent)")
+            logger.info("[Session %s] Voice bridge ready (awaiting speech to start agent)", self.session_id)
             return True
             
         except Exception as e:
-            print(f"[Session {self.session_id}] Initialization error: {e}")
+            logger.error("[Session %s] Initialization error: %s", self.session_id, str(e), exc_info=True)
             await self.websocket.send_json({
                 "type": "error",
                 "message": f"Initialization failed: {str(e)}"
@@ -89,84 +96,91 @@ class IntegratedVoiceSession:
             return
         
         try:
-            # Debug size (first 5 pre-start chunks & then every 20 after start)
-            if not self.bridge.has_started():
-                if self._pre_start_chunks < 5:
-                    print(f"[Session {self.session_id}] Incoming pre-start audio chunk {self._pre_start_chunks+1} size={len(audio_data)} bytes")
-            else:
-                if self._pre_start_chunks % 20 == 0:
-                    print(f"[Session {self.session_id}] Ongoing audio chunk size={len(audio_data)} bytes")
-            # If conversation not started, run cheap VAD on this chunk.
+            # If conversation not started, run VAD
             if not self.bridge.has_started():
                 speech, rms = self._is_speech(audio_data, return_rms=True)
                 self._pre_start_chunks += 1
-                # Accumulate RMS for fallback decision
                 self._rms_accum += rms
                 self._rms_samples += 1
                 avg_rms = self._rms_accum / self._rms_samples if self._rms_samples else 0
-                debug_every = 10
-                if self._pre_start_chunks % debug_every == 0:
-                    print(f"[Session {self.session_id}] Pre-start VAD debug: chunks={self._pre_start_chunks} last_rms={rms:.4f} avg_rms={avg_rms:.4f}")
+                
+                if self._pre_start_chunks % 10 == 0:
+                    logger.debug(
+                        "[Session %s] Pre-start VAD: chunks=%d last_rms=%.4f avg_rms=%.4f",
+                        self.session_id, self._pre_start_chunks, rms, avg_rms
+                    )
 
-                # Conditions to start conversation:
-                # 1. Detected speech on a chunk OR
-                # 2. Received >=25 chunks (~500ms+) and average RMS above very low floor OR
-                # 3. Safety auto-start after 60 chunks (~1.2s) regardless
-                if speech or (self._pre_start_chunks >= 25 and avg_rms > 0.003) or self._pre_start_chunks >= 60:
+                # Start conversation conditions
+                should_start = (
+                    speech or
+                    (self._pre_start_chunks >= settings.VAD_PRE_START_CHUNKS and avg_rms > settings.VAD_MIN_RMS) or
+                    self._pre_start_chunks >= settings.VAD_AUTO_START_CHUNKS
+                )
+                
+                if should_start:
                     ok = await self.bridge.start_conversation()
                     if ok:
+                        reason = "speech" if speech else ("avg_rms" if avg_rms > settings.VAD_MIN_RMS else "timeout")
                         await self.websocket.send_json({
                             "type": "status",
                             "message": "Conversation started (VAD/auto)",
                             "status": "started",
                             "started": True,
-                            "reason": "speech" if speech else ("avg_rms" if avg_rms > 0.003 else "timeout")
+                            "reason": reason
                         })
-                        print(f"[Session {self.session_id}] Agent conversation started reason={ 'speech' if speech else ('avg_rms' if avg_rms > 0.003 else 'timeout')} rms={rms:.4f} avg={avg_rms:.4f}")
+                        logger.info(
+                            "[Session %s] Conversation started: reason=%s rms=%.4f avg=%.4f",
+                            self.session_id, reason, rms, avg_rms
+                        )
+                
                 if not self.bridge.has_started():
-                    return  # still waiting
-            # Conversation active: forward audio
+                    return
+            
+            # Forward audio to bridge
             await self.bridge.process_audio_chunk(audio_data)
             
-            # Log the audio processing for debugging
-            print(f"[Session {self.session_id}] Processed audio: {len(audio_data)} bytes")
-            
         except Exception as e:
-            print(f"[Session {self.session_id}] Audio processing error: {e}")
+            logger.error("[Session %s] Audio processing error: %s", self.session_id, str(e), exc_info=True)
     
     async def _on_audio_response(self, audio_data: bytes):
         """Handle audio response from ElevenLabs agent"""
+        if not self.is_active:
+            return
+            
         try:
-            # Send audio response back to Jitsi
             await self.websocket.send_bytes(audio_data)
             
-            # Also send a text notification
             await self.websocket.send_json({
                 "type": "audio_response",
                 "size": len(audio_data),
                 "timestamp": time.time()
             })
             
+        except (WebSocketDisconnect, RuntimeError) as e:
+            logger.warning("[Session %s] Client disconnected during audio send: %s", self.session_id, str(e))
+            self.is_active = False
         except Exception as e:
-            print(f"[Session {self.session_id}] Error sending audio response: {e}")
+            logger.error("[Session %s] Error sending audio response: %s", self.session_id, str(e))
     
     async def _on_text_response(self, text: str):
         """Handle text response from ElevenLabs agent"""
+        if not self.is_active:
+            return
+            
         try:
             await self.websocket.send_json({
                 "type": "text_response",
                 "text": text,
                 "timestamp": time.time()
             })
+        except (WebSocketDisconnect, RuntimeError) as e:
+            logger.warning("[Session %s] Client disconnected during text send: %s", self.session_id, str(e))
+            self.is_active = False
         except Exception as e:
-            print(f"[Session {self.session_id}] Error sending text response: {e}")
+            logger.error("[Session %s] Error sending text response: %s", self.session_id, str(e))
 
     def _is_speech(self, pcm16: bytes, return_rms: bool = False):
-        """Simple energy-based VAD with optional RMS return.
-
-        Returns (bool, rms) if return_rms else bool.
-        Threshold tuned lower for downsampled meeting audio.
-        """
+        """Simple energy-based VAD with optional RMS return"""
         if not pcm16:
             return (False, 0.0) if return_rms else False
 
@@ -174,9 +188,8 @@ class IntegratedVoiceSession:
         if sample_count == 0:
             return (False, 0.0) if return_rms else False
 
-        import math
         total = 0.0
-        step = 4  # stride over samples to reduce work
+        step = 4  # Stride over samples to reduce work
         limit = sample_count - (sample_count % step)
         for i in range(0, limit, step):
             lo = pcm16[2 * i]
@@ -191,10 +204,7 @@ class IntegratedVoiceSession:
             return (False, 0.0) if return_rms else False
 
         rms = math.sqrt(total / used) / 32768.0
-        # Lower threshold for remote meeting audio that may be quieter after downsampling.
-        # If false positives occur, raise to ~0.005-0.006.
-        threshold = 0.0005
-        is_speech = rms > threshold
+        is_speech = rms > settings.VAD_THRESHOLD
         return (is_speech, rms) if return_rms else is_speech
     
     async def _on_error(self, error: str):
@@ -206,14 +216,14 @@ class IntegratedVoiceSession:
                 "timestamp": time.time()
             })
         except Exception as e:
-            print(f"[Session {self.session_id}] Error sending error message: {e}")
+            logger.error("[Session %s] Error sending error message: %s", self.session_id, str(e))
     
     async def cleanup(self):
         """Clean up the session"""
         self.is_active = False
         if self.bridge:
             await self.bridge.cleanup()
-        print(f"[Session {self.session_id}] Session cleaned up")
+        logger.info("[Session %s] Session cleaned up", self.session_id)
 
 
 # Global session management
@@ -224,33 +234,33 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
     """Handle the integrated voice WebSocket connection"""
     await websocket.accept()
     
-    print(f"[Session {session_id}] New integrated voice connection")
+    logger.info("[Session %s] New integrated voice connection", session_id)
     
     # Create session
     session = IntegratedVoiceSession(session_id, websocket)
     active_sessions[session_id] = session
     
+    # Register with cleanup service
+    cleanup_service.register_session(session_id)
+    
     try:
         # Initialize the voice conversation
         if not await session.initialize():
-            print(f"[Session {session_id}] Failed to initialize")
+            logger.error("[Session %s] Failed to initialize", session_id)
             return
         
         # Main message loop
         while session.is_active:
             try:
-                # Receive message (could be audio bytes or JSON)
                 message = await websocket.receive()
                 
                 if "bytes" in message:
                     # Audio data from Jitsi
                     audio_data = message["bytes"]
-                    print(f"[Session {session_id}] Received audio from frontend: {len(audio_data)} bytes")
-                    # Log the first few audio chunks for debugging
-                    if session._pre_start_chunks < 5:
-                        print(f"[Session {session_id}] Received audio chunk: {len(audio_data)} bytes")
                     
-                    # Process the audio data
+                    # Update activity for timeout tracking
+                    cleanup_service.update_session_activity(session_id)
+                    
                     await session.process_audio(audio_data)
                     
                 elif "text" in message:
@@ -260,14 +270,11 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
                         message_type = data.get("type")
                         
                         if message_type == "ping":
-                            # Keep alive
                             await websocket.send_json({"type": "pong"})
                         elif message_type == "stop":
-                            # Stop conversation
                             session.is_active = False
                             break
                         elif message_type == "status":
-                            # Status request
                             await websocket.send_json({
                                 "type": "status",
                                 "active": session.is_active,
@@ -283,26 +290,30 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
                                     "started": ok,
                                     "reason": "force"
                                 })
-                                print(f"[Session {session_id}] Force start requested -> {'OK' if ok else 'FAILED'}")
+                                logger.info("[Session %s] Force start requested -> %s", session_id, 'OK' if ok else 'FAILED')
                             
                     except json.JSONDecodeError:
-                        print(f"[Session {session_id}] Invalid JSON received")
+                        logger.warning("[Session %s] Invalid JSON received", session_id)
                         
             except WebSocketDisconnect:
-                print(f"[Session {session_id}] WebSocket disconnected")
+                logger.info("[Session %s] WebSocket disconnected", session_id)
                 break
             except Exception as e:
-                print(f"[Session {session_id}] Error in message loop: {e}")
+                logger.error("[Session %s] Error in message loop: %s", session_id, str(e), exc_info=True)
                 break
                 
     except Exception as e:
-        print(f"[Session {session_id}] Session error: {e}")
+        logger.error("[Session %s] Session error: %s", session_id, str(e), exc_info=True)
     finally:
         # Cleanup
         await session.cleanup()
         if session_id in active_sessions:
             del active_sessions[session_id]
-        print(f"[Session {session_id}] Session ended")
+        
+        # Unregister from cleanup service
+        cleanup_service.unregister_session(session_id)
+        
+        logger.info("[Session %s] Session ended", session_id)
 
 
 # FastAPI WebSocket endpoint (to be added to main.py)
@@ -326,64 +337,3 @@ def get_session_status(session_id: str) -> Optional[dict]:
             "ready": session.bridge.is_ready() if session.bridge else False
         }
     return None
-
-
-async def stop_session(session_id: str):
-    """Stop a specific session"""
-    if session_id in active_sessions:
-        session = active_sessions[session_id]
-        await session.cleanup()
-        del active_sessions[session_id]
-        return True
-    return False
-
-
-async def stop_all_sessions():
-    """Stop all active sessions"""
-    for session_id in list(active_sessions.keys()):
-        await stop_session(session_id)
-
-
-# Example usage and testing
-async def test_integration():
-    """Test the integration without FastAPI"""
-    print("Testing ElevenLabs Voice Integration...")
-    
-    # Test bridge creation
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    agent_id = os.getenv("ELEVENLABS_AGENT_ID")
-    
-    if not api_key or not agent_id:
-        print("Missing environment variables")
-        return
-    
-    bridge = JitsiElevenLabsBridge(api_key, agent_id)
-    
-    # Initialize
-    if not await bridge.initialize():
-        print("Failed to initialize bridge")
-        return
-    
-    # Register callbacks
-    def on_audio(audio_data):
-        print(f"Audio response: {len(audio_data)} bytes")
-    
-    def on_text(text):
-        print(f"Text response: {text}")
-    
-    def on_error(error):
-        print(f"Error: {error}")
-    
-    bridge.register_audio_callback(on_audio)
-    bridge.register_text_callback(on_text)
-    bridge.register_error_callback(on_error)
-    
-    # Start conversation
-    await bridge.start_conversation()
-    
-    print("Integration test completed successfully")
-    await bridge.cleanup()
-
-
-if __name__ == "__main__":
-    asyncio.run(test_integration())

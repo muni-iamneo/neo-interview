@@ -1,46 +1,46 @@
 #!/usr/bin/env python3
-"""Real-time ElevenLabs ConvAI WebSocket bridge used by FastAPI endpoint.
-
-Replaces earlier stub; supports continuous audio after join.
-"""
+"""Real-time ElevenLabs ConvAI WebSocket bridge"""
 
 import asyncio
 import base64
 import json
-import logging
-import os
 import time
 from typing import Dict, Optional, Callable, Any, List
 
 import websockets
-from elevenlabs.client import ElevenLabs  # retained for possible future REST use
-from dotenv import load_dotenv
+from elevenlabs.client import ElevenLabs
 
-load_dotenv()
+# Import configuration and logging
+from ..core.config import get_settings
+from ..core.logging_config import get_logger
 
-logger = logging.getLogger("elevenlabs_voice")
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
+# Initialize settings and logger
+settings = get_settings()
+logger = get_logger(__name__)
 
 
 class ElevenLabsVoiceHandler:
+    """Handles WebSocket communication with ElevenLabs ConvAI"""
+    
     def __init__(self, api_key: str, agent_id: str):
-        # Connection / auth
         self.api_key = api_key
         self.agent_id = agent_id
-        self.websocket_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={agent_id}"
+        self.websocket_url = f"{settings.ELEVENLABS_WEBSOCKET_URL}?agent_id={agent_id}"
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
         self.is_connected = False
 
         # Callback registry
-        self.response_callbacks = {}  # type: Dict[str, Callable]
+        self.response_callbacks: Dict[str, Callable] = {}
 
         # Outgoing audio buffering
         self._pcm_buffer = bytearray()
-        self._flush_bytes = 3200  # ≈100ms @16k (16000 *2 bytes *0.1)
+        self._flush_bytes = settings.AUDIO_FLUSH_BYTES
         self._last_flush = time.time()
         self._conversation_ready = False
-        self._pending_audio_before_ready = []  # type: List[bytes]
+        self._pending_audio_before_ready: List[bytes] = []
+        
+        # Successful payload format cache
+        self._successful_payload_format: Optional[int] = None
 
     async def connect(self) -> bool:
         if self.is_connected and self.websocket:
@@ -190,13 +190,7 @@ class ElevenLabsVoiceHandler:
         This method handles buffering and flushing of audio data to ensure
         optimal chunk sizes for the ElevenLabs API.
         """
-        if not self.is_connected:
-            logger.debug("[EL] Not connected, ignoring audio data")
-            return
-            
-        # Check if we have valid audio data
-        if not pcm16 or len(pcm16) == 0:
-            logger.debug("[EL] Empty audio data received, ignoring")
+        if not self.is_connected or not pcm16:
             return
             
         # Handle audio before conversation is ready
@@ -205,11 +199,6 @@ class ElevenLabsVoiceHandler:
             self._pending_audio_before_ready.append(pcm16)
             if len(self._pending_audio_before_ready) > 10:
                 self._pending_audio_before_ready.pop(0)
-            
-            # Log the buffer size periodically
-            total_pending = sum(len(chunk) for chunk in self._pending_audio_before_ready)
-            logger.debug("[EL] Buffering audio until ready: %d bytes in %d chunks", 
-                        total_pending, len(self._pending_audio_before_ready))
             return
             
         # Add to buffer
@@ -219,14 +208,8 @@ class ElevenLabsVoiceHandler:
         buffer_size = len(self._pcm_buffer)
         time_since_flush = time.time() - self._last_flush
         
-        # Log buffer status for debugging
-        logger.debug("[EL] Buffer status: %d bytes, %.2fs since last flush", 
-                    buffer_size, time_since_flush)
-        
-        # Flush criteria: either buffer size or time threshold
-        if buffer_size >= self._flush_bytes or time_since_flush > 0.5:
-            logger.debug("[EL] Flushing %d bytes of audio (time: %.2fs)", 
-                        buffer_size, time_since_flush)
+        # Flush criteria: buffer size or time threshold
+        if buffer_size >= self._flush_bytes or time_since_flush > settings.AUDIO_FLUSH_INTERVAL:
             await self.flush()
 
     async def flush(self):
@@ -238,71 +221,63 @@ class ElevenLabsVoiceHandler:
         self._last_flush = time.time()
 
     async def _send_chunk(self, pcm16: bytes):
-        """Send audio chunk to ElevenLabs with enhanced error handling and logging"""
+        """Send audio chunk to ElevenLabs with cached payload format for optimization"""
         if not (self.websocket and self.is_connected):
-            logger.debug("[EL] Cannot send chunk - not connected")
             return
             
-        # Skip empty chunks
         if not pcm16 or len(pcm16) == 0:
-            logger.debug("[EL] Skipping empty chunk")
             return
             
         try:
-            # Validate PCM data (should be even length for 16-bit samples)
+            # Validate PCM data
             if len(pcm16) % 2 != 0:
-                logger.warning("[EL] PCM data length is not even (%d bytes), padding", len(pcm16))
-                pcm16 = pcm16 + b'\x00'  # Pad with a zero byte
+                logger.warning("[EL] PCM data length not even (%d bytes), padding", len(pcm16))
+                pcm16 = pcm16 + b'\x00'
                 
             # Convert to base64
             b64 = base64.b64encode(pcm16).decode("utf-8")
             
-            # Try different payload formats (ElevenLabs API versions differ)
+            # Payload format variants (ordered by most common first)
             variants = [
                 {"user_audio_chunk": b64},
                 {"type": "user_audio_chunk", "user_audio_chunk": b64},
-                {"type": "audio", "audio_base64": b64},
                 {"audio_base64": b64},
-                {"type": "audio", "audio": b64},
-                # Add continuous flag for better streaming
-                {"user_audio_chunk": b64, "stream_type": "continuous"},
+                {"type": "audio", "audio_base64": b64},
             ]
             
-            # Try each variant until one succeeds
-            last_err = None
-            success = False
+            # If we have a cached successful format, use it
+            if self._successful_payload_format is not None:
+                try:
+                    payload = variants[self._successful_payload_format]
+                    await self.websocket.send(json.dumps(payload))
+                    return
+                except Exception:
+                    # Cached format failed, reset and try all
+                    logger.debug("[EL] Cached payload format failed, retrying")
+                    self._successful_payload_format = None
             
+            # Try each variant until one succeeds
             for idx, payload in enumerate(variants):
                 try:
                     await self.websocket.send(json.dumps(payload))
-                    logger.debug("[EL] -> Sent %d bytes (format #%d: %s)", 
+                    self._successful_payload_format = idx
+                    logger.info("[EL] Sent %d bytes using format #%d: %s",
                                 len(pcm16), idx, list(payload.keys()))
-                    success = True
-                    break
-                except Exception as pe:
-                    last_err = pe
-                    # Only log if we're on the last attempt
+                    return
+                except Exception:
                     if idx == len(variants) - 1:
-                        logger.warning("[EL] All payload formats failed: %s", pe)
+                        raise  # Last attempt failed
                     continue
-            
-            # Log previous errors if we eventually succeeded
-            if success and last_err:
-                logger.debug("[EL] Note: %d earlier payload attempts failed before success", 
-                            variants.index(payload))
-                
-            # If all attempts failed, raise the last error
-            if not success and last_err:
-                raise last_err
                 
         except Exception as e:
-            logger.error("[EL] Failed to send audio chunk: %s", e)
+            logger.error("[EL] Failed to send audio chunk: %s", str(e))
             await self._notify("error", f"Failed to send audio: {str(e)}")
             
-            # Try to reconnect if connection seems broken
+            # Try to reconnect if connection is broken
             if "connection" in str(e).lower() or "closed" in str(e).lower():
-                logger.warning("[EL] Connection may be broken, attempting to reconnect...")
+                logger.warning("[EL] Connection broken, reconnecting...")
                 self.is_connected = False
+                self._successful_payload_format = None
                 asyncio.create_task(self.connect())
 
     def register_callback(self, event: str, cb: Callable):
@@ -372,19 +347,3 @@ class JitsiElevenLabsBridge:
         return self.handler.is_ready()
 
 
-async def _demo():  # Manual test helper
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    agent_id = os.getenv("ELEVENLABS_AGENT_ID")
-    if not (api_key and agent_id):
-        print("Set ELEVENLABS_API_KEY & ELEVENLABS_AGENT_ID")
-        return
-    bridge = JitsiElevenLabsBridge(api_key, agent_id)
-    await bridge.initialize()
-    await bridge.start_conversation()
-    # 1 second of silence
-    await bridge.process_audio_chunk(b"\x00" * 32000)
-    await asyncio.sleep(2)
-    await bridge.cleanup()
-
-if __name__ == "__main__":
-    asyncio.run(_demo())

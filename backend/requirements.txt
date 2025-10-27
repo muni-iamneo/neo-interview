@@ -1,0 +1,32 @@
+# FastAPI Backend Requirements
+# Pin versions for reproducible builds
+
+# Web Framework
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-dotenv==1.1.1
+
+# WebSocket Support
+websockets==15.0.1
+
+# JWT & Cryptography
+PyJWT==2.10.1
+cryptography==45.0.6
+
+# HTTP Client
+httpx==0.28.1
+aiohttp==3.12.15
+
+# ElevenLabs Integration
+elevenlabs==2.9.2
+
+# Data Validation
+pydantic==2.11.7
+pydantic-settings==2.7.1
+
+# Type Checking
+typing-extensions==4.14.1
+
+# Additional Dependencies
+certifi==2025.8.3
+idna==3.10

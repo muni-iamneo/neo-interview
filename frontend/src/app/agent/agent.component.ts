@@ -5,8 +5,7 @@ import { HttpClient } from '@angular/common/http';
   selector: 'app-agent',
   standalone: true,
   imports: [],
-  templateUrl: './agent.component.html',
-  styleUrl: './agent.component.css'
+  templateUrl: './agent.component.html'
 })
 export class AgentComponent implements OnInit, OnDestroy {
   constructor(private http: HttpClient) {}
