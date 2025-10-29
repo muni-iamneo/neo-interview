@@ -1,8 +1,502 @@
+<div class="moderator-container">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-top">
+      <nav class="breadcrumb">
+        <a href="/" class="breadcrumb-item">Home</a>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item breadcrumb-current">Interview Moderator</span>
+      </nav>
+    </div>
+    <div class="header-content">
+      <!-- <h1 class="title">Interview Moderator</h1> -->
+      <!-- <p class="subtitle">Select an agent and start your interview</p> -->
+    </div>
+    <div class="header-actions">
+      @if (selectedAgent() && !showCreateForm()) {
+        <button 
+          (click)="startSession()"
+          class="btn btn-launch btn-header">
+          <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Start Interview
+        </button>
+      }
+    </div>
+  </header>
+
+  <!-- Toast Notifications -->
+  @if (toastMessage()) {
+    <div class="toast" [class.toast-success]="toastType() === 'success'" 
+         [class.toast-error]="toastType() === 'error'"
+         [class.toast-info]="toastType() === 'info'">
+      <svg class="toast-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        @if (toastType() === 'success') {
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        } @else if (toastType() === 'error') {
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        } @else {
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        }
+      </svg>
+      <span>{{ toastMessage() }}</span>
+      <button class="toast-close" (click)="toastMessage.set('')">&times;</button>
+    </div>
+  }
+  
+  <!-- Error/Success Messages -->
+  @if (formError()) {
+    <div class="alert alert-error">
+      <svg class="alert-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+      <span>{{ formError() }}</span>
+      <button class="alert-close" (click)="formError.set('')">&times;</button>
+    </div>
+  }
+
+  @if (successMessage()) {
+    <div class="alert alert-success">
+      <svg class="alert-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+      <span>{{ successMessage() }}</span>
+      <button class="alert-close" (click)="successMessage.set('')">&times;</button>
+    </div>
+  }
+
+  <div class="content-grid">
+    <!-- Left Panel: Agent Management -->
+    <div class="panel panel-agents">
+      <div class="panel-header">
 <div>
-  <h3>Moderator Dashboard</h3>
-  <button (click)="startSession()">Start Session & Open Agent</button>
-  <div>
-    <strong>Session Status</strong>
-    <pre>{{ agentResponses() }}</pre>
+          <h2 class="panel-title">Interview Agents</h2>
+          <p class="panel-description">Select or create an AI interviewer</p>
+        </div>
+        <button class="btn btn-primary btn-sm" (click)="toggleCreateForm()">
+          <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+          </svg>
+          {{ showCreateForm() ? 'Cancel' : 'New Agent' }}
+        </button>
+      </div>
+
+      <div class="panel-body">
+        <!-- Create Agent Form -->
+        @if (showCreateForm()) {
+          <div class="create-form">
+            <div class="form-header">
+              <button class="btn-back" (click)="toggleCreateForm()">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                </svg>
+                Back
+              </button>
+              <h3 class="form-title">Create New Agent</h3>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label class="label">Agent Name <span class="required">*</span></label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="agentForm.name"
+                  class="input"
+                  placeholder="e.g., Senior Developer Interviewer">
+              </div>
+            </div>
+
+            <div class="form-row form-row-2">
+              <div class="form-group">
+                <label class="label">Interview Role <span class="required">*</span></label>
+                <input 
+                  type="text" 
+                  [(ngModel)]="agentForm.role"
+                  class="input"
+                  placeholder="e.g., Senior Backend Engineer">
+              </div>
+
+              <div class="form-group">
+                <label class="label">Interview Type <span class="required">*</span></label>
+                <select [(ngModel)]="agentForm.interviewType" class="select">
+                  @for (type of interviewTypes; track type.value) {
+                    <option [value]="type.value">{{ type.label }}</option>
+                  }
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="label">Duration (minutes) <span class="required">*</span></label>
+                <input 
+                  type="number" 
+                  [(ngModel)]="agentForm.maxInterviewMinutes"
+                  min="5"
+                  max="180"
+                  class="input">
+                <small class="hint">Between 5 and 180 minutes</small>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="label">Job Description <span class="required">*</span></label>
+                <textarea 
+                  [(ngModel)]="agentForm.jobDescription"
+                  rows="6"
+                  class="textarea"
+                  placeholder="Enter the full job description..."></textarea>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="label">
+                  Custom System Prompt 
+                  <span class="optional">(Optional)</span>
+                </label>
+                <textarea 
+                  [(ngModel)]="agentForm.systemPrompt"
+                  rows="8"
+                  class="textarea textarea-mono"
+                  placeholder="Leave blank for auto-generated prompt based on interview type&#10;&#10;Or customize to define specific interview style, structure, and questions..."></textarea>
+                <small class="hint">
+                  <svg class="hint-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  Time-tracking instructions are automatically added
+                </small>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button 
+                (click)="createAgent()"
+                [disabled]="isCreatingAgent()"
+                class="btn btn-success">
+                @if (isCreatingAgent()) {
+                  <svg class="btn-icon spinner" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Creating...
+                } @else {
+                  Create Agent
+                }
+              </button>
+            </div>
+          </div>
+        }
+
+        <!-- Agents List -->
+        @if (!showCreateForm()) {
+          <div class="agents-list">
+            @if (isLoadingAgents()) {
+              <div class="loading-state">
+                <svg class="spinner-large" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p>Loading agents...</p>
+              </div>
+            } @else if (agents().length === 0) {
+              <div class="empty-state">
+                <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                </svg>
+                <h3>No Agents Yet</h3>
+                <p>Create your first interview agent to get started</p>
+              </div>
+            } @else {
+              @for (agent of agents(); track agent.id) {
+                <div 
+                  class="agent-card"
+                  [class.agent-card-selected]="selectedAgent()?.id === agent.id"
+                  (click)="selectAgent(agent)">
+                  <div class="agent-card-header">
+                    <div class="agent-info">
+                      <h3 class="agent-name">{{ agent.name }}</h3>
+                      <p class="agent-role">{{ agent.role }}</p>
+                    </div>
+                    <div class="agent-actions">
+                      @if (selectedAgent()?.id === agent.id) {
+                        <svg class="check-icon" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                      }
+                      <button 
+                        class="btn-icon-only btn-danger"
+                        (click)="confirmDelete(agent, $event)"
+                        title="Delete agent">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div class="agent-meta">
+                    <span class="badge badge-type">{{ agent.interviewType.replace('_', ' ') | titlecase }}</span>
+                    <span class="badge badge-duration">{{ agent.maxInterviewMinutes }} min</span>
+                  </div>
+                  
+                  <p class="agent-description">{{ agent.jobDescription.substring(0, 120) }}{{ agent.jobDescription.length > 120 ? '...' : '' }}</p>
+                  
+                  @if (agent.systemPrompt) {
+                    <div class="agent-badge">
+                      <svg class="badge-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                      </svg>
+                      Custom Prompt
+                    </div>
+                  }
+                </div>
+              }
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- Right Panel: Session Status & Agent Details -->
+    <div class="panel-stack">
+      @if (selectedAgent() && !showCreateForm()) {
+        <!-- Session Status - Moved to Top -->
+        <div class="panel panel-status">
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 class="panel-title">Session Status</h2>
+            @if (currentSessionInfo()) {
+              <button class="btn btn-sm" (click)="showActiveSessions.set(!showActiveSessions())" style="padding: 4px 8px; font-size: 0.85em;">
+                {{ showActiveSessions() ? 'Hide' : 'Show' }} Details
+              </button>
+            }
+          </div>
+          <div class="panel-body">
+            @if (currentSessionInfo()) {
+              <div style="padding: 12px; background: #f8f9fa; border-radius: 4px; margin-bottom: 12px;" [style.border-left]="'4px solid ' + getSessionStatusBorderColor()">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                  <div>
+                    <strong style="display: block; margin-bottom: 4px;">
+                      @if (currentSessionInfo()!.status === 'active') { ✅ Active }
+                      @else if (currentSessionInfo()!.status === 'dropped') { ⚠️ Dropped }
+                      @else if (currentSessionInfo()!.status === 'paused') { ⏸️ Paused }
+                      @else { 🏁 Ended }
+                    </strong>
+                    <span style="font-size: 0.9em; color: #6c757d;">
+                      Meeting: {{ currentSessionInfo()!.meetingId || 'N/A' }}
+                    </span>
+                  </div>
+                  @if (currentSessionInfo()!.canRejoin && (currentSessionInfo()!.status === 'dropped' || currentSessionInfo()!.status === 'paused')) {
+                    <button class="btn btn-sm" (click)="resumeCurrentSession()" style="padding: 4px 12px; font-size: 0.85em; background: #007bff;">
+                      🔄 Resume
+                    </button>
+                  }
+                </div>
+                @if (showActiveSessions()) {
+                  <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #dee2e6; font-size: 0.85em; color: #6c757d;">
+                    <div style="margin-bottom: 4px;"><strong>Duration:</strong> {{ currentSessionInfo()!.maxInterviewMinutes || 'N/A' }} minutes</div>
+                    @if (currentSessionInfo()!.interviewStartTime) {
+                      <div style="margin-bottom: 4px;">
+                        <strong>Started:</strong> {{ formatTime(currentSessionInfo()!.interviewStartTime) }}
+                      </div>
+                    }
+                    @if (currentSessionInfo()!.lastActivity) {
+                      <div style="margin-bottom: 4px;">
+                        <strong>Last Activity:</strong> {{ formatTime(currentSessionInfo()!.lastActivity) }}
+                      </div>
+                    }
+                    @if (currentSessionInfo()!.endReason) {
+                      <div><strong>End Reason:</strong> {{ currentSessionInfo()!.endReason }}</div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+            @if (agentResponses()) {
+              <div class="status-log">{{ agentResponses() }}</div>
+            } @else if (!currentSessionInfo()) {
+              <div class="status-empty">
+                <svg class="status-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <p>No active session</p>
+                <small class="hint">Click "Start Interview" to begin</small>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Agent Details with Tabs -->
+        <div class="panel panel-details">
+          <div class="panel-header">
+            <h2 class="panel-title">Agent Details</h2>
+          </div>
+          
+          <!-- Tab Navigation -->
+          <div class="tabs">
+            <button 
+              class="tab" 
+              [class.tab-active]="activeTab() === 'overview'"
+              (click)="setActiveTab('overview')">
+              Overview
+            </button>
+            <button 
+              class="tab" 
+              [class.tab-active]="activeTab() === 'configuration'"
+              (click)="setActiveTab('configuration')">
+              Configuration
+            </button>
+            <button 
+              class="tab" 
+              [class.tab-active]="activeTab() === 'history'"
+              (click)="setActiveTab('history')">
+              History
+            </button>
+          </div>
+          
+          <div class="panel-body">
+            <!-- Overview Tab -->
+            @if (activeTab() === 'overview') {
+              <div class="tab-content">
+                <div class="detail-grid">
+                  <div class="detail-item">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">{{ selectedAgent()!.name }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Role</span>
+                    <span class="detail-value">{{ selectedAgent()!.role }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Interview Type</span>
+                    <span class="badge badge-type-large">{{ selectedAgent()!.interviewType.replace('_', ' ') | titlecase }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Default Duration</span>
+                    <span class="detail-value">{{ selectedAgent()!.maxInterviewMinutes }} minutes</span>
+                  </div>
+                </div>
+
+                <div class="detail-full">
+                  <span class="detail-label">Job Description</span>
+                  <div class="detail-text">{{ selectedAgent()!.jobDescription }}</div>
+                </div>
+              </div>
+            }
+            
+            <!-- Configuration Tab -->
+            @if (activeTab() === 'configuration') {
+              <div class="tab-content">
+                @if (selectedAgent()!.systemPrompt) {
+                  <div class="detail-full">
+                    <span class="detail-label">Custom System Prompt</span>
+                    <div class="detail-code">{{ selectedAgent()!.systemPrompt }}</div>
+                  </div>
+                } @else {
+                  <div class="empty-state">
+                    <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                    </svg>
+                    <h3>Using Default Prompt</h3>
+                    <p>This agent uses the auto-generated prompt based on interview type</p>
+                  </div>
+                }
+              </div>
+            }
+            
+            <!-- History Tab -->
+            @if (activeTab() === 'history') {
+              <div class="tab-content">
+                <div class="empty-state">
+                  <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  <h3>No History Yet</h3>
+                  <p>Interview sessions will appear here once started</p>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      <!-- Placeholder when no agent selected -->
+      @if (!selectedAgent() && !showCreateForm() && agents().length > 0) {
+        <div class="panel panel-placeholder animated-hint">
+          <div class="placeholder-content">
+            <svg class="placeholder-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12"></path>
+            </svg>
+            <h3>👈 Select an Agent</h3>
+            <p>Choose an agent from the list to configure and start an interview</p>
+          </div>
+        </div>
+      }
+      
+      @if (!selectedAgent() && !showCreateForm() && agents().length === 0) {
+        <div class="panel panel-placeholder">
+          <div class="placeholder-content">
+            <svg class="placeholder-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            <h3>Get Started</h3>
+            <p>Create your first agent to begin conducting interviews</p>
+          </div>
+        </div>
+      }
+    </div>
   </div>
+
+  <!-- Delete Confirmation Modal -->
+  @if (showDeleteConfirm()) {
+    <div class="modal-overlay" (click)="cancelDelete()">
+      <div class="modal" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h3 class="modal-title">Delete Agent</h3>
+          <button class="modal-close" (click)="cancelDelete()">&times;</button>
+        </div>
+        
+        <div class="modal-body">
+          <div class="warning-message">
+            <svg class="warning-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            <div>
+              <p class="warning-title">This action cannot be undone</p>
+              <p class="warning-text">
+                Are you sure you want to delete <strong>"{{ agentToDelete()?.name }}"</strong>?
+                This will remove the agent from both local storage and ElevenLabs.
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button 
+            class="btn btn-secondary"
+            (click)="cancelDelete()"
+            [disabled]="isDeletingAgent()">
+            Cancel
+          </button>
+          <button 
+            class="btn btn-danger"
+            (click)="deleteAgent()"
+            [disabled]="isDeletingAgent()">
+            @if (isDeletingAgent()) {
+              <svg class="btn-icon spinner" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Deleting...
+            } @else {
+              Delete Agent
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 </div>

@@ -18,6 +18,8 @@ from ..core.logging_config import get_logger
 # Import services
 from .cleanup_service import get_cleanup_service
 from .elevenlabs_service import JitsiElevenLabsBridge
+from .session_config import get_session_config, clear_session_config
+from .sessions_service import get_sessions_service, SessionStatus
 
 # Initialize settings and logger
 settings = get_settings()
@@ -38,28 +40,53 @@ class IntegratedVoiceSession:
         self._pre_start_chunks = 0
         self._rms_accum = 0.0
         self._rms_samples = 0
+        # Interview timing
+        self._interview_start_time: Optional[float] = None
+        self._max_interview_minutes: Optional[int] = None
+        self._duration_check_task: Optional[asyncio.Task] = None
         
     async def initialize(self) -> bool:
         """Initialize the voice conversation"""
         try:
-            if not settings.ELEVENLABS_API_KEY or not settings.ELEVENLABS_AGENT_ID:
-                logger.error("[Session %s] Missing ElevenLabs configuration", self.session_id)
+            if not settings.ELEVENLABS_API_KEY:
+                logger.error("[Session %s] Missing ElevenLabs API key", self.session_id)
                 await self.websocket.send_json({
                     "type": "error",
-                    "message": "Missing ElevenLabs configuration"
+                    "message": "Missing ElevenLabs API key"
+                })
+                return False
+            
+            # Get agent ID - check session config first, then fallback to .env
+            agent_id = settings.ELEVENLABS_AGENT_ID
+            session_config = get_session_config(self.session_id)
+            
+            if session_config:
+                agent_id = session_config.eleven_agent_id
+                self._max_interview_minutes = session_config.max_interview_minutes
+                logger.info("[Session %s] Using per-session agent: %s max_minutes=%s", 
+                           self.session_id, agent_id, self._max_interview_minutes)
+            else:
+                logger.info("[Session %s] Using default agent from .env: %s", self.session_id, agent_id)
+            
+            if not agent_id:
+                logger.error("[Session %s] No agent ID configured", self.session_id)
+                await self.websocket.send_json({
+                    "type": "error",
+                    "message": "No agent configured for this session"
                 })
                 return False
             
             # Create bridge
             self.bridge = JitsiElevenLabsBridge(
                 settings.ELEVENLABS_API_KEY,
-                settings.ELEVENLABS_AGENT_ID
+                agent_id
             )
             
             # Register callbacks
             self.bridge.register_audio_callback(self._on_audio_response)
             self.bridge.register_text_callback(self._on_text_response)
             self.bridge.register_error_callback(self._on_error)
+            self.bridge.register_tool_callback(self._on_tool_call)
             
             # Initialize
             if not await self.bridge.initialize():
@@ -121,16 +148,34 @@ class IntegratedVoiceSession:
                     ok = await self.bridge.start_conversation()
                     if ok:
                         reason = "speech" if speech else ("avg_rms" if avg_rms > settings.VAD_MIN_RMS else "timeout")
+                        self._interview_start_time = time.time()
+                        
+                        # Update session with interview start time
+                        sessions_service = get_sessions_service()
+                        try:
+                            await sessions_service.update_session(
+                                self.session_id,
+                                interview_start_time=self._interview_start_time,
+                                last_activity=self._interview_start_time,
+                            )
+                        except Exception as e:
+                            logger.warning("[Session %s] Failed to update interview start time: %s", self.session_id, str(e))
+                        
+                        # Start duration monitoring task if max minutes is set
+                        if self._max_interview_minutes and not self._duration_check_task:
+                            self._duration_check_task = asyncio.create_task(self._monitor_interview_duration())
+                        
                         await self.websocket.send_json({
                             "type": "status",
                             "message": "Conversation started (VAD/auto)",
                             "status": "started",
                             "started": True,
-                            "reason": reason
+                            "reason": reason,
+                            "max_minutes": self._max_interview_minutes
                         })
                         logger.info(
-                            "[Session %s] Conversation started: reason=%s rms=%.4f avg=%.4f",
-                            self.session_id, reason, rms, avg_rms
+                            "[Session %s] Conversation started: reason=%s rms=%.4f avg=%.4f max_minutes=%s",
+                            self.session_id, reason, rms, avg_rms, self._max_interview_minutes
                         )
                 
                 if not self.bridge.has_started():
@@ -218,11 +263,131 @@ class IntegratedVoiceSession:
         except Exception as e:
             logger.error("[Session %s] Error sending error message: %s", self.session_id, str(e))
     
+    async def _on_tool_call(self, tool_data: dict):
+        """Handle tool calls from ElevenLabs (e.g., end_call)"""
+        try:
+            # Handle different tool call formats
+            tool_name = (
+                tool_data.get("name") or 
+                tool_data.get("tool_name") or 
+                tool_data.get("function_name") or
+                tool_data.get("function")
+            )
+            
+            logger.debug("[Session %s] Received tool call: %s", self.session_id, tool_name)
+            
+            if tool_name == "end_call":
+                logger.info("[Session %s] Agent requested to end call via end_call tool", self.session_id)
+                await self._end_interview("agent_requested", can_rejoin=False)
+            else:
+                logger.debug("[Session %s] Unhandled tool call: %s", self.session_id, tool_name)
+        except Exception as e:
+            logger.error("[Session %s] Error handling tool call: %s", self.session_id, str(e), exc_info=True)
+    
+    async def _monitor_interview_duration(self):
+        """Background task to monitor interview duration and force-end if time limit exceeded"""
+        if not self._max_interview_minutes or not self._interview_start_time:
+            return
+        
+        max_seconds = self._max_interview_minutes * 60
+        check_interval = 10  # Check every 10 seconds
+        
+        try:
+            while self.is_active:
+                await asyncio.sleep(check_interval)
+                
+                if not self._interview_start_time:
+                    continue
+                
+                elapsed = time.time() - self._interview_start_time
+                remaining = max_seconds - elapsed
+                
+                # Log warning at 1 minute remaining
+                if 0 < remaining <= 60:
+                    logger.warning("[Session %s] Interview ending in %.0f seconds", self.session_id, remaining)
+                    try:
+                        await self.websocket.send_json({
+                            "type": "warning",
+                            "message": f"Interview ending in {int(remaining)} seconds",
+                            "remaining_seconds": int(remaining)
+                        })
+                    except Exception:
+                        pass
+                
+                # Force end if time exceeded
+                if elapsed >= max_seconds:
+                    logger.info("[Session %s] Interview duration limit reached (%d minutes), forcing end", 
+                               self.session_id, self._max_interview_minutes)
+                    await self._end_interview("time_limit_reached", can_rejoin=False)
+                    break
+                    
+        except asyncio.CancelledError:
+            logger.debug("[Session %s] Duration monitoring task cancelled", self.session_id)
+        except Exception as e:
+            logger.error("[Session %s] Error in duration monitoring: %s", self.session_id, str(e))
+    
+    async def _end_interview(self, reason: str = "unknown", can_rejoin: bool = False):
+        """End the interview session"""
+        if not self.is_active:
+            return
+        
+        logger.info("[Session %s] Ending interview: reason=%s can_rejoin=%s", self.session_id, reason, can_rejoin)
+        
+        # Update session status in storage
+        sessions_service = get_sessions_service()
+        try:
+            if can_rejoin:
+                # Network drop - mark as dropped, can rejoin
+                await sessions_service.mark_dropped(self.session_id, reason=reason)
+            else:
+                # Explicit end - mark as ended, cannot rejoin
+                await sessions_service.end_session(self.session_id, reason=reason, can_rejoin=False)
+        except Exception as e:
+            logger.error("[Session %s] Failed to update session status: %s", self.session_id, str(e))
+        
+        try:
+            await self.websocket.send_json({
+                "type": "interview_ended",
+                "message": f"Interview ended: {reason}",
+                "reason": reason,
+                "canRejoin": can_rejoin,
+                "timestamp": time.time()
+            })
+        except Exception as e:
+            logger.warning("[Session %s] Failed to send end notification: %s", self.session_id, str(e))
+        
+        self.is_active = False
+        
+        # Cancel duration monitoring task
+        if self._duration_check_task and not self._duration_check_task.done():
+            self._duration_check_task.cancel()
+            try:
+                await self._duration_check_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cleanup bridge
+        if self.bridge:
+            await self.bridge.cleanup()
+    
     async def cleanup(self):
         """Clean up the session"""
         self.is_active = False
+        
+        # Cancel duration monitoring task
+        if self._duration_check_task and not self._duration_check_task.done():
+            self._duration_check_task.cancel()
+            try:
+                await self._duration_check_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.bridge:
             await self.bridge.cleanup()
+        
+        # Clear session config
+        clear_session_config(self.session_id)
+        
         logger.info("[Session %s] Session cleaned up", self.session_id)
 
 
@@ -261,6 +426,17 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
                     # Update activity for timeout tracking
                     cleanup_service.update_session_activity(session_id)
                     
+                    # Update last activity in session storage
+                    sessions_service = get_sessions_service()
+                    try:
+                        import time as time_module
+                        await sessions_service.update_session(
+                            session_id,
+                            last_activity=time_module.time(),
+                        )
+                    except Exception as e:
+                        logger.debug("[Session %s] Failed to update last activity: %s", session_id, str(e))
+                    
                     await session.process_audio(audio_data)
                     
                 elif "text" in message:
@@ -272,7 +448,8 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
                         if message_type == "ping":
                             await websocket.send_json({"type": "pong"})
                         elif message_type == "stop":
-                            session.is_active = False
+                            # Explicit stop - end interview, cannot rejoin
+                            await session._end_interview("user_stopped", can_rejoin=False)
                             break
                         elif message_type == "status":
                             await websocket.send_json({
@@ -283,21 +460,50 @@ async def handle_integrated_voice_websocket(websocket: WebSocket, session_id: st
                         elif message_type == "force_start":
                             if session.bridge and not session.bridge.has_started():
                                 ok = await session.bridge.start_conversation()
+                                if ok:
+                                    session._interview_start_time = time.time()
+                                    # Start duration monitoring task if max minutes is set
+                                    if session._max_interview_minutes and not session._duration_check_task:
+                                        session._duration_check_task = asyncio.create_task(session._monitor_interview_duration())
                                 await websocket.send_json({
                                     "type": "status",
                                     "message": "Conversation started (force)",
                                     "status": "started" if ok else "error",
                                     "started": ok,
-                                    "reason": "force"
+                                    "reason": "force",
+                                    "max_minutes": session._max_interview_minutes
                                 })
                                 logger.info("[Session %s] Force start requested -> %s", session_id, 'OK' if ok else 'FAILED')
                             
                     except json.JSONDecodeError:
                         logger.warning("[Session %s] Invalid JSON received", session_id)
+                elif "type" in message and message["type"] == "websocket.disconnect":
+                    logger.info("[Session %s] WebSocket disconnect message received", session_id)
+                    break
                         
             except WebSocketDisconnect:
                 logger.info("[Session %s] WebSocket disconnected", session_id)
+                # Mark as dropped (network issue), can potentially rejoin
+                sessions_service = get_sessions_service()
+                try:
+                    await sessions_service.mark_dropped(session_id, reason="websocket_disconnect")
+                except Exception as e:
+                    logger.warning("[Session %s] Failed to mark as dropped: %s", session_id, str(e))
                 break
+            except RuntimeError as e:
+                # Handle case where receive() is called after disconnect
+                if "disconnect" in str(e).lower():
+                    logger.info("[Session %s] WebSocket disconnected (RuntimeError): %s", session_id, str(e))
+                    # Mark as dropped (network issue), can potentially rejoin
+                    sessions_service = get_sessions_service()
+                    try:
+                        await sessions_service.mark_dropped(session_id, reason="websocket_error")
+                    except Exception as e2:
+                        logger.warning("[Session %s] Failed to mark as dropped: %s", session_id, str(e2))
+                    break
+                else:
+                    logger.error("[Session %s] RuntimeError in message loop: %s", session_id, str(e), exc_info=True)
+                    break
             except Exception as e:
                 logger.error("[Session %s] Error in message loop: %s", session_id, str(e), exc_info=True)
                 break

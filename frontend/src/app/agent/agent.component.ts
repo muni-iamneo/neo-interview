@@ -1,5 +1,6 @@
 import { Component, OnInit, signal, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { ApiService } from '../services/api.service';
 
 @Component({
   selector: 'app-agent',
@@ -8,10 +9,13 @@ import { HttpClient } from '@angular/common/http';
   templateUrl: './agent.component.html'
 })
 export class AgentComponent implements OnInit, OnDestroy {
-  constructor(private http: HttpClient) {}
+  constructor(
+    private http: HttpClient,
+    private apiService: ApiService
+  ) {}
 
   private voiceWs: WebSocket | null = null;
-  sessionId = 'testsession';
+  sessionId = ''; // Will be loaded from sessionStorage
 
   agentResponses = signal<string>('');
   hasValidSession = signal<boolean>(false);
@@ -46,16 +50,74 @@ export class AgentComponent implements OnInit, OnDestroy {
   private audioContextsResumed = false; // Track if audio contexts have been resumed
   private placeholderJitsiAudioTrack: any | null = null; // Pre-allocates audio transceiver
   private agentTrackInjected = false; // Ensure we only add/replace once
+  showEndConfirm = signal(false); // Confirmation dialog state
+  sessionInfo = signal<any>(null); // Current session information
+  canRejoin = signal(false); // Whether session can be rejoined
+  interviewStatus = signal<string>(''); // Interview status message
+  private sessionInfoInterval: any = null; // Interval for refreshing session info
+  
+  getStatusBorderColor(): string {
+    const status = this.interviewStatus();
+    if (status === 'active') return '#28a745';
+    if (status === 'dropped' || status === 'paused') return '#ffc107';
+    if (status === 'ended') return '#dc3545';
+    return '#6c757d';
+  }
 
   ngOnInit(): void {
-    this.waitForJitsiScripts().then(() => {
+    this.waitForJitsiScripts().then(async () => {
       try {
+        // Get sessionId from sessionStorage
+        const storedSessionId = sessionStorage.getItem('currentSessionId');
+        if (storedSessionId) {
+          this.sessionId = storedSessionId;
+        }
+        
         const raw = sessionStorage.getItem('jaasSession');
         if (raw) {
           const res = JSON.parse(raw);
           console.log('✅ Using existing JaaS session from moderator:', res);
+          
+          // Extract sessionId from stored data if available
+          if (res.sessionId) {
+            this.sessionId = res.sessionId;
+          } else if (storedSessionId) {
+            this.sessionId = storedSessionId;
+          }
+          
+          // Check if session can be rejoined
+          const sessionInfo = await this.checkSessionStatus();
+          this.sessionInfo.set(sessionInfo);
+          
+          if (sessionInfo) {
+            this.canRejoin.set(sessionInfo.canRejoin === true);
+            this.interviewStatus.set(sessionInfo.status || 'unknown');
+            
+            if (sessionInfo.status === 'dropped' || sessionInfo.status === 'paused') {
+              if (sessionInfo.canRejoin) {
+                console.log('🔄 Session was dropped, attempting to resume...');
+                try {
+                  await this.apiService.resumeSession(this.sessionId).toPromise();
+                  console.log('✅ Session resumed');
+                  this.agentResponses.update(t => t + '[INFO] Rejoined session after network drop\n');
+                  this.interviewStatus.set('active');
+                  // Refresh session info
+                  const updatedInfo = await this.checkSessionStatus();
+                  this.sessionInfo.set(updatedInfo);
+                } catch (err) {
+                  console.error('Failed to resume session:', err);
+                }
+              }
+            } else if (sessionInfo.status === 'ended') {
+              this.agentResponses.update(t => t + '[INFO] This interview session has ended.\n');
+            }
+          }
+          
           this.hasValidSession.set(true);
           this.joinJaas(res.domain, res.room, res.jwt);
+          
+          // Start periodic session info refresh
+          this.startSessionInfoRefresh();
           return;
         }
       } catch (error) {
@@ -68,11 +130,39 @@ export class AgentComponent implements OnInit, OnDestroy {
     });
   }
 
+  private async checkSessionStatus(): Promise<any> {
+    try {
+      return await this.apiService.getSessionInfo(this.sessionId).toPromise();
+    } catch (err) {
+      console.warn('Could not fetch session status:', err);
+      return null;
+    }
+  }
+
+  private startSessionInfoRefresh(): void {
+    // Refresh session info every 10 seconds
+    if (this.sessionInfoInterval) {
+      clearInterval(this.sessionInfoInterval);
+    }
+    
+    this.sessionInfoInterval = setInterval(async () => {
+      const info = await this.checkSessionStatus();
+      if (info) {
+        this.sessionInfo.set(info);
+        this.canRejoin.set(info.canRejoin === true);
+        this.interviewStatus.set(info.status || '');
+      }
+    }, 10000); // Refresh every 10 seconds
+  }
+
   ngOnDestroy(): void {
     console.log('Destroying agent component, cleaning up resources...');
     this.stopRecording();
     if (this.trackPollingInterval) {
       clearInterval(this.trackPollingInterval);
+    }
+    if (this.sessionInfoInterval) {
+      clearInterval(this.sessionInfoInterval);
     }
     
     // Clean up agent audio track
@@ -322,12 +412,23 @@ export class AgentComponent implements OnInit, OnDestroy {
     }
     if (this.activeRemoteTrackId === mediaTrack.id) return console.log(`ℹ️ Track ${mediaTrack.id} already active.`);
 
-    console.log(`[handleRemoteTrack] Processing new track ${mediaTrack.id}`);
+    console.log(`[handleRemoteTrack] Processing new track ${mediaTrack.id} - Candidate has joined!`);
     this.activeRemoteTrackId = mediaTrack.id;
 
     const stream = new MediaStream([mediaTrack]);
     this.pipeStreamToAssembly(stream, 'meeting');
     this.startRecording(stream);
+    
+    // Now that candidate has joined, if no audio received after a delay, we can force start
+    // This is a fallback in case VAD doesn't trigger (e.g., candidate is muted initially)
+    setTimeout(() => {
+      if (this.voiceWs && this.voiceWs.readyState === WebSocket.OPEN && 
+          this.activeRemoteTrackId === mediaTrack.id && 
+          this.meetingChunkCount === 0) {
+        this.voiceWs.send(JSON.stringify({ type: 'force_start' }));
+        console.log('⚡ Candidate joined but no audio detected - force starting conversation.');
+      }
+    }, 5000); // Wait 5 seconds after track detection for audio
 
     // force stream to flow
     const hidden = document.createElement('audio');
@@ -400,12 +501,19 @@ export class AgentComponent implements OnInit, OnDestroy {
         console.log(`🚚 Flushing buffered chunk (#${this.meetingChunkCount})`);
         this.voiceWs.send(c);
       }
+      // Only force start if we have a remote track (candidate has joined) but no audio yet
+      // Wait longer to ensure candidate has time to join
       setTimeout(() => {
-        if (this.meetingChunkCount === 0) {
+        // Only force start if:
+        // 1. We have detected a remote track (candidate has joined)
+        // 2. But no audio chunks have been received yet
+        if (this.activeRemoteTrackId && this.meetingChunkCount === 0) {
           this.voiceWs?.send(JSON.stringify({ type: 'force_start' }));
-          console.log('⚡ Force started conversation due to no audio.');
+          console.log('⚡ Force started conversation (candidate joined but no audio detected yet).');
+        } else if (!this.activeRemoteTrackId) {
+          console.log('⏳ Waiting for candidate to join before starting conversation...');
         }
-      }, 5000);
+      }, 10000); // Increased to 10 seconds to give candidate time to join
     };
     this.voiceWs.onerror = (e) => {
       console.error('❌ Voice WebSocket error:', e);
@@ -422,6 +530,17 @@ export class AgentComponent implements OnInit, OnDestroy {
           } else if (data.type === 'error') {
             console.error('❌ Agent Error:', data.message);
             this.agentResponses.update((t) => t + `[ERR] ${data.message}\n`);
+          } else if (data.type === 'interview_ended') {
+            console.log('🏁 Interview ended:', data.reason);
+            this.agentResponses.update((t) => t + `[END] Interview ended: ${data.reason}\n`);
+            const canRejoin = data.canRejoin === true;
+            if (canRejoin) {
+              this.agentResponses.update((t) => t + `[INFO] You can rejoin this session. Connection dropped due to network issue.\n`);
+            }
+            await this.endInterview(false); // End without confirmation
+          } else if (data.type === 'warning' && data.remaining_seconds) {
+            console.warn('⏰ Interview ending soon:', data.remaining_seconds, 'seconds');
+            this.agentResponses.update((t) => t + `[WARN] Interview ending in ${data.remaining_seconds} seconds\n`);
           }
         } catch (e) {
           console.error('Failed to parse message:', e);
@@ -432,6 +551,16 @@ export class AgentComponent implements OnInit, OnDestroy {
       console.log('🚪 Voice WebSocket closed:', event.reason);
       this.agentResponses.update((t) => t + `[WS] Disconnected: ${event.reason}\n`);
       this.wsStarted = false;
+      
+      // Check session status when WebSocket closes (might be a drop)
+      setTimeout(async () => {
+        const info = await this.checkSessionStatus();
+        if (info) {
+          this.sessionInfo.set(info);
+          this.interviewStatus.set(info.status || '');
+          this.canRejoin.set(info.canRejoin === true);
+        }
+      }, 1000);
     };
   }
 
@@ -697,6 +826,143 @@ export class AgentComponent implements OnInit, OnDestroy {
   async enableAudio(): Promise<void> {
     console.log('🎧 User clicked Enable Audio button');
     await this.resumeAudioContexts();
+  }
+
+  // End interview with confirmation
+  requestEndInterview(): void {
+    this.showEndConfirm.set(true);
+  }
+
+  async confirmEndInterview(): Promise<void> {
+    this.showEndConfirm.set(false);
+    await this.endInterview(true);
+  }
+
+  cancelEndInterview(): void {
+    this.showEndConfirm.set(false);
+  }
+
+  async attemptRejoin(): Promise<void> {
+    if (!this.canRejoin()) {
+      return;
+    }
+
+    try {
+      this.agentResponses.update(t => t + '[INFO] Attempting to rejoin session...\n');
+      await this.apiService.resumeSession(this.sessionId).toPromise();
+      
+      // Check if we have JWT in sessionStorage
+      const raw = sessionStorage.getItem('jaasSession');
+      if (raw) {
+        const res = JSON.parse(raw);
+        
+        // Try to get fresh JWT for rejoin
+        // Extract room ID (which should be sessionId) from the full room path (tenant/sessionId)
+        try {
+          // The room should be the sessionId, so we use it directly
+          const roomId = res.room.split('/').pop() || this.sessionId;
+          
+          // Get interview duration from session info for TTL calculation
+          const sessionInfo = this.sessionInfo();
+          let jwtTtlSeconds: number | undefined = undefined;
+          if (sessionInfo && sessionInfo.maxInterviewMinutes) {
+            const bufferMinutes = 5;
+            jwtTtlSeconds = (sessionInfo.maxInterviewMinutes + bufferMinutes) * 60;
+          }
+          
+          const jwtRes = await this.apiService.mintJWT({
+            room: roomId,  // Use the same room ID (sessionId) for rejoin
+            user: { name: 'Candidate' },
+            ttlSec: jwtTtlSeconds,  // Include TTL based on interview duration if available
+            sessionId: this.sessionId,
+            rejoin: true
+          } as any).toPromise();
+          
+          if (jwtRes) {
+            sessionStorage.setItem('jaasSession', JSON.stringify(jwtRes));
+            this.agentResponses.update(t => t + '[SUCCESS] Session rejoined! Reconnecting...\n');
+            // Reload the page to reconnect with new JWT
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          }
+        } catch (jwtErr) {
+          // If JWT minting fails, try using existing JWT
+          console.log('Using existing JWT for rejoin');
+          this.hasValidSession.set(true);
+          this.joinJaas(res.domain, res.room, res.jwt);
+        }
+      } else {
+        this.agentResponses.update(t => t + '[ERROR] No session found to rejoin\n');
+      }
+      
+      // Refresh session info
+      const updatedInfo = await this.checkSessionStatus();
+      this.sessionInfo.set(updatedInfo);
+      this.interviewStatus.set(updatedInfo?.status || '');
+      
+    } catch (err: any) {
+      console.error('Failed to rejoin session:', err);
+      this.agentResponses.update(t => t + `[ERROR] Failed to rejoin: ${err.message || 'Unknown error'}\n`);
+    }
+  }
+
+  async endInterview(confirmClose: boolean = true): Promise<void> {
+    console.log('🏁 Ending interview...');
+    
+    if (confirmClose) {
+      // Send stop message to backend
+      if (this.voiceWs && this.voiceWs.readyState === WebSocket.OPEN) {
+        this.voiceWs.send(JSON.stringify({ type: 'stop' }));
+        console.log('📤 Sent stop message to backend');
+      }
+    }
+    
+    // Clean up Jitsi
+    this.stopRecording();
+    
+    if (this.activeConference) {
+      try {
+        // Remove all tracks
+        if (this.agentAudioTrack) {
+          this.activeConference.removeTrack(this.agentAudioTrack);
+        }
+        if (this.placeholderJitsiAudioTrack) {
+          this.activeConference.removeTrack(this.placeholderJitsiAudioTrack);
+        }
+        
+        // Leave conference
+        this.activeConference.removeAllTracks();
+        this.activeConference.leave();
+        console.log('🚪 Left Jitsi conference');
+      } catch (e) {
+        console.warn('⚠️ Error leaving conference:', e);
+      }
+    }
+    
+    // Close WebSocket
+    if (this.voiceWs) {
+      this.voiceWs.close();
+      this.voiceWs = null;
+      console.log('🔌 Closed WebSocket');
+    }
+    
+    // Clean up audio contexts
+    try {
+      if (this.audioContext) {
+        await this.audioContext.close();
+        this.audioContext = null;
+      }
+      if (this.agentPlaybackContext) {
+        await this.agentPlaybackContext.close();
+        this.agentPlaybackContext = null;
+      }
+    } catch (e) {
+      console.warn('⚠️ Error closing audio contexts:', e);
+    }
+    
+    this.agentResponses.update((t) => t + '[END] Interview session closed.\n');
+    this.wsStarted = false;
   }
 
 

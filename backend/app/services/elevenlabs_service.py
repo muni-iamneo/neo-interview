@@ -143,6 +143,28 @@ class ElevenLabsVoiceHandler:
             if "error" in data:
                 await self._notify("error", data["error"])
 
+            # Tool calls (e.g., end_call) - handle various formats
+            if "tool_call" in data:
+                await self._notify("tool_call", data["tool_call"])
+            elif "tool_calls" in data:
+                for tool_call in data["tool_calls"]:
+                    await self._notify("tool_call", tool_call)
+            elif "function_call" in data:
+                await self._notify("tool_call", data["function_call"])
+            elif "function_calls" in data:
+                for func_call in data["function_calls"]:
+                    await self._notify("tool_call", func_call)
+            # Check for tool calls nested in agent response events
+            elif "agent_response_event" in data:
+                agent_event = data["agent_response_event"]
+                if "tool_call" in agent_event:
+                    await self._notify("tool_call", agent_event["tool_call"])
+                elif "tool_calls" in agent_event:
+                    for tool_call in agent_event["tool_calls"]:
+                        await self._notify("tool_call", tool_call)
+                elif "function_call" in agent_event:
+                    await self._notify("tool_call", agent_event["function_call"])
+
             logger.debug("[EL] Event %s", data)
         except Exception as e:
             logger.error("[EL] Event handling error: %s", e)
@@ -330,6 +352,9 @@ class JitsiElevenLabsBridge:
 
     def register_error_callback(self, cb: Callable):
         self.handler.register_callback("error", cb)
+
+    def register_tool_callback(self, cb: Callable):
+        self.handler.register_callback("tool_call", cb)
 
     async def start_conversation(self):
         if not self._started:
