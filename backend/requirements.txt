@@ -30,3 +30,7 @@ typing-extensions==4.14.1
 # Additional Dependencies
 certifi==2025.8.3
 idna==3.10
+
+# Redis
+redis==7.0.1
+hiredis==3.3.0

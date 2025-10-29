@@ -2,7 +2,7 @@ import { Component, signal, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule, TitleCasePipe } from '@angular/common';
 
-import { ApiService, JWTRequest, AgentResponse, CreateAgentRequest } from '../services/api.service';
+import { ApiService, JWTRequest, AgentResponse, CreateAgentRequest, SessionInfo } from '../services/api.service';
 import { ConfigService } from '../services/config.service';
 
 @Component({
@@ -64,6 +64,10 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   toastType = signal<'success' | 'error' | 'info'>('info');
   currentSessionInfo = signal<any>(null); // Current active session info
   showActiveSessions = signal<boolean>(false); // Toggle for active sessions panel
+  
+  // Agent session history
+  agentSessionHistory = signal<SessionInfo[]>([]);
+  isLoadingHistory = signal<boolean>(false);
 
   constructor(
     private apiService: ApiService,
@@ -113,6 +117,34 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     this.selectedAgent.set(agent);
     this.interviewSettings.meetingDuration = agent.maxInterviewMinutes;
     console.log('Selected agent:', agent.name);
+    // Load session history when agent is selected
+    if (this.activeTab() === 'history') {
+      this.loadAgentHistory(agent.id);
+    }
+  }
+  
+  setActiveTab(tab: 'overview' | 'setup' | 'configuration' | 'history'): void {
+    this.activeTab.set(tab);
+    // Load history when switching to history tab
+    if (tab === 'history' && this.selectedAgent()) {
+      this.loadAgentHistory(this.selectedAgent()!.id);
+    }
+  }
+  
+  loadAgentHistory(agentId: string): void {
+    this.isLoadingHistory.set(true);
+    this.apiService.getAgentSessionHistory(agentId).subscribe({
+      next: (response) => {
+        this.agentSessionHistory.set(response.sessions);
+        this.isLoadingHistory.set(false);
+        console.log(`✅ Loaded ${response.totalCount} sessions for agent`);
+      },
+      error: (err) => {
+        console.error('❌ Failed to load agent history', err);
+        this.isLoadingHistory.set(false);
+        this.agentSessionHistory.set([]);
+      }
+    });
   }
 
   toggleCreateForm(): void {
@@ -299,10 +331,6 @@ export class ModeratorComponent implements OnInit, OnDestroy {
         this.formError.set(err.error?.detail || 'Failed to delete agent. Please try again.');
       }
     });
-  }
-
-  setActiveTab(tab: 'overview' | 'setup' | 'configuration' | 'history'): void {
-    this.activeTab.set(tab);
   }
 
   getUserInitials(): string {

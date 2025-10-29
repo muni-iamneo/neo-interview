@@ -1,6 +1,7 @@
 """
 Sessions Storage Service
 Manages persistent storage of interview sessions with status tracking
+Uses Redis for storage
 """
 
 import json
@@ -8,16 +9,13 @@ import uuid
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
-from pathlib import Path
 from enum import Enum
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from ..core.logging_config import get_logger
+from .redis_service import RedisStorage
 
 logger = get_logger(__name__)
-
-SESSIONS_FILE = Path(__file__).parent.parent / "storage" / "sessions.json"
-_file_lock = asyncio.Lock()
 
 
 class SessionStatus(str, Enum):
@@ -121,42 +119,37 @@ class SessionData:
 
 
 class SessionsService:
-    """Service for managing session storage"""
+    """Service for managing session storage using Redis"""
     
     def __init__(self):
+        self.redis = RedisStorage(key_prefix="session")
         self._sessions: Dict[str, SessionData] = {}
-        self._load_sessions()
+        # Load sessions on init (async, but we'll do it synchronously if Redis is available)
     
-    def _load_sessions(self):
-        """Load sessions from file"""
+    async def _load_sessions(self):
+        """Load sessions from Redis"""
         try:
-            if SESSIONS_FILE.exists():
-                with open(SESSIONS_FILE, 'r') as f:
-                    data = json.load(f)
-                    self._sessions = {
-                        session["sessionId"]: SessionData.from_dict(session)
-                        for session in data
-                    }
-                logger.info("Loaded %d sessions from storage", len(self._sessions))
-            else:
-                SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                SESSIONS_FILE.write_text("[]")
-                self._sessions = {}
-                logger.info("Created new sessions storage file")
+            sessions_data = await self.redis.get_all_json("*")
+            self._sessions = {
+                session_id: SessionData.from_dict(data)
+                for session_id, data in sessions_data.items()
+            }
+            logger.info("Loaded %d sessions from Redis", len(self._sessions))
         except Exception as e:
-            logger.error("Failed to load sessions: %s", str(e), exc_info=True)
+            logger.error("Failed to load sessions from Redis: %s", str(e), exc_info=True)
             self._sessions = {}
     
-    async def _save_sessions(self):
-        """Save sessions to file"""
+    async def _save_session(self, session: SessionData):
+        """Save a single session to Redis"""
         try:
-            async with _file_lock:
-                data = [session.to_dict() for session in self._sessions.values()]
-                with open(SESSIONS_FILE, 'w') as f:
-                    json.dump(data, f, indent=2)
-                logger.debug("Saved %d sessions to storage", len(self._sessions))
+            session_id = session.session_id
+            success = await self.redis.set_json(session_id, session.to_dict())
+            if success:
+                logger.debug("Saved session to Redis: %s", session_id)
+            else:
+                logger.error("Failed to save session to Redis: %s", session_id)
         except Exception as e:
-            logger.error("Failed to save sessions: %s", str(e), exc_info=True)
+            logger.error("Failed to save session to Redis: %s", str(e), exc_info=True)
     
     async def create_session(
         self,
@@ -186,16 +179,34 @@ class SessionsService:
             can_rejoin=True,
         )
         self._sessions[session_id] = session
-        await self._save_sessions()
+        await self._save_session(session)
         logger.info("Created session: %s (meeting: %s)", session_id, meeting_id)
         return session
     
     async def get_session(self, session_id: str) -> Optional[SessionData]:
-        """Get a session by ID"""
-        return self._sessions.get(session_id)
+        """Get a session by ID (from cache or Redis)"""
+        # Check in-memory cache first
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+        
+        # Load from Redis if not in cache
+        try:
+            data = await self.redis.get_json(session_id)
+            if data:
+                session = SessionData.from_dict(data)
+                self._sessions[session_id] = session  # Cache it
+                return session
+        except Exception as e:
+            logger.error("Failed to get session from Redis: %s", str(e))
+        
+        return None
     
     async def get_session_by_meeting(self, meeting_id: str) -> Optional[SessionData]:
         """Get a session by meeting ID"""
+        # Load all sessions if cache is empty
+        if not self._sessions:
+            await self._load_sessions()
+        
         for session in self._sessions.values():
             if session.meeting_id == meeting_id:
                 return session
@@ -212,7 +223,8 @@ class SessionsService:
         can_rejoin: Optional[bool] = None,
     ) -> Optional[SessionData]:
         """Update session properties"""
-        session = self._sessions.get(session_id)
+        # Load from Redis if not in cache
+        session = await self.get_session(session_id)
         if not session:
             logger.warning("Session not found for update: %s", session_id)
             return None
@@ -235,7 +247,7 @@ class SessionsService:
             session.can_rejoin = can_rejoin
         
         session.updated_at = datetime.utcnow().isoformat()
-        await self._save_sessions()
+        await self._save_session(session)
         logger.debug("Updated session: %s", session_id)
         return session
     
@@ -274,7 +286,7 @@ class SessionsService:
     
     async def resume_session(self, session_id: str) -> Optional[SessionData]:
         """Resume a dropped/paused session"""
-        session = self._sessions.get(session_id)
+        session = await self.get_session(session_id)
         if not session:
             return None
         
@@ -291,20 +303,27 @@ class SessionsService:
         session.last_activity = time_module.time()
         session.end_time = None  # Clear end time when resuming
         session.updated_at = datetime.utcnow().isoformat()
-        await self._save_sessions()
+        await self._save_session(session)
         logger.info("Resumed session: %s", session_id)
         return session
     
     async def list_sessions(
         self,
         status: Optional[SessionStatus] = None,
+        agent_id: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[SessionData]:
-        """List sessions, optionally filtered by status"""
+        """List sessions, optionally filtered by status and/or agent_id"""
+        # Load all sessions from Redis
+        await self._load_sessions()
+        
         sessions = list(self._sessions.values())
         
         if status:
             sessions = [s for s in sessions if s.status == status]
+        
+        if agent_id:
+            sessions = [s for s in sessions if s.agent_id == agent_id]
         
         # Sort by updated_at descending
         sessions.sort(key=lambda s: s.updated_at or "", reverse=True)
@@ -315,13 +334,18 @@ class SessionsService:
         return sessions
     
     async def delete_session(self, session_id: str) -> bool:
-        """Delete a session"""
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-            await self._save_sessions()
-            logger.info("Deleted session: %s", session_id)
-            return True
-        return False
+        """Delete a session from Redis"""
+        try:
+            success = await self.redis.delete(session_id)
+            if success:
+                # Remove from cache
+                if session_id in self._sessions:
+                    del self._sessions[session_id]
+                logger.info("Deleted session: %s", session_id)
+            return success
+        except Exception as e:
+            logger.error("Failed to delete session from Redis: %s", str(e))
+            return False
 
 
 # Global service instance

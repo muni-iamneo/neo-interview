@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     JWT_DEFAULT_TTL_SECONDS: int = Field(default=3600)
     JWT_MAX_TTL_SECONDS: int = Field(default=86400)
     
+    # Redis Configuration
+    CACHE_BACKEND_URL: Optional[str] = Field(default=None, description="Redis URL for cache/storage")
+    CELERY_BROKER_URL: Optional[str] = Field(default=None, description="Redis URL for Celery broker")
+    
     # Logging Configuration
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FORMAT: str = Field(

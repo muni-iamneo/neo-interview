@@ -410,13 +410,69 @@
             <!-- History Tab -->
             @if (activeTab() === 'history') {
               <div class="tab-content">
-                <div class="empty-state">
-                  <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                  </svg>
-                  <h3>No History Yet</h3>
-                  <p>Interview sessions will appear here once started</p>
-                </div>
+                @if (isLoadingHistory()) {
+                  <div class="empty-state">
+                    <svg class="empty-icon spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <h3>Loading History...</h3>
+                  </div>
+                } @else if (agentSessionHistory().length === 0) {
+                  <div class="empty-state">
+                    <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <h3>No History Yet</h3>
+                    <p>Interview sessions will appear here once started</p>
+                  </div>
+                } @else {
+                  <div class="history-list">
+                    @for (session of agentSessionHistory(); track session.sessionId) {
+                      <div class="history-item" [class.history-item-active]="session.status === 'active'">
+                        <div class="history-item-header">
+                          <div class="history-item-meta">
+                            <span class="history-status" [class]="'status-' + session.status">{{ session.status }}</span>
+                            <span class="history-date">@if (session.startTime) { {{ formatTime(session.startTime) }} }</span>
+                          </div>
+                          @if (session.status === 'active') {
+                            <span class="history-badge badge-active">Active</span>
+                          }
+                        </div>
+                        <div class="history-item-body">
+                          <div class="history-detail">
+                            <span class="history-label">Session ID:</span>
+                            <span class="history-value history-monospace">{{ session.sessionId.substring(0, 8) }}...</span>
+                          </div>
+                          @if (session.maxInterviewMinutes) {
+                            <div class="history-detail">
+                              <span class="history-label">Duration:</span>
+                              <span class="history-value">{{ session.maxInterviewMinutes }} min</span>
+                            </div>
+                          }
+                          @if (session.interviewStartTime) {
+                            <div class="history-detail">
+                              <span class="history-label">Started:</span>
+                              <span class="history-value">{{ formatTime(session.interviewStartTime) }}</span>
+                            </div>
+                          }
+                          @if (session.endTime) {
+                            <div class="history-detail">
+                              <span class="history-label">Ended:</span>
+                              <span class="history-value">{{ formatTime(session.endTime) }}</span>
+                            </div>
+                          }
+                          @if (session.endReason) {
+                            <div class="history-detail">
+                              <span class="history-label">Reason:</span>
+                              <span class="history-value">{{ session.endReason }}</span>
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
               </div>
             }
           </div>

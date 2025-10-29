@@ -151,3 +151,20 @@ async def get_session_info(session_id: str):
         logger.error("Failed to get session info: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
+@router.get("/agent/{agent_id}/history")
+async def get_agent_session_history(agent_id: str):
+    """Get session history for a specific agent"""
+    try:
+        sessions_service = get_sessions_service()
+        sessions = await sessions_service.list_sessions(agent_id=agent_id, limit=100)
+        
+        return {
+            "agentId": agent_id,
+            "sessions": [session.to_dict() for session in sessions],
+            "totalCount": len(sessions)
+        }
+    except Exception as e:
+        logger.error("Failed to get agent session history: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+

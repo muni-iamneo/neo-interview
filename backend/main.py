@@ -25,6 +25,7 @@ from app.core.logging_config import get_logger
 # Import services
 from app.services.cleanup_service import get_cleanup_service
 from app.services.voice_endpoint import integrated_voice_endpoint, get_active_session_count, get_session_status
+from app.services.redis_service import close_redis_client
 
 # Import API routers
 from app.api.agents_router import router as agents_router
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Application shutting down...")
     await cleanup_service.stop()
+    await close_redis_client()
     logger.info("Application shutdown complete")
 
 

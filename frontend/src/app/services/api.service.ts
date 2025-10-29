@@ -206,5 +206,14 @@ export class ApiService {
       this.config.getApiUrl(`/voice/sessions/${sessionId}/info`)
     );
   }
+
+  /**
+   * Get session history for an agent
+   */
+  getAgentSessionHistory(agentId: string): Observable<{ agentId: string; sessions: SessionInfo[]; totalCount: number }> {
+    return this.http.get<{ agentId: string; sessions: SessionInfo[]; totalCount: number }>(
+      this.config.getApiUrl(`/voice/sessions/agent/${agentId}/history`)
+    );
+  }
 }
 

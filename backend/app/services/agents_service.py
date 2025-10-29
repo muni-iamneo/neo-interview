@@ -1,6 +1,7 @@
 """
 ElevenLabs Agents Service
 Manages agent creation, updates, and persistence with ElevenLabs API
+Uses Redis for storage
 """
 
 import json
@@ -8,19 +9,16 @@ import uuid
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
-from pathlib import Path
 
 import httpx
 from elevenlabs.client import ElevenLabs
 
 from ..core.config import get_settings
 from ..core.logging_config import get_logger
+from .redis_service import RedisStorage
 
 settings = get_settings()
 logger = get_logger(__name__)
-
-AGENTS_FILE = Path(__file__).parent.parent / "storage" / "agents.json"
-_file_lock = asyncio.Lock()
 
 
 class AgentData:
@@ -82,7 +80,7 @@ class AgentData:
 
 
 class AgentsService:
-    """Service for managing agents with ElevenLabs"""
+    """Service for managing agents with ElevenLabs using Redis"""
     
     def __init__(self):
         self.api_key = settings.ELEVENLABS_API_KEY
@@ -90,46 +88,39 @@ class AgentsService:
             logger.warning("ELEVENLABS_API_KEY not configured")
         self.client = ElevenLabs(api_key=self.api_key) if self.api_key else None
         self.base_url = "https://api.elevenlabs.io/v1"
+        self.redis = RedisStorage(key_prefix="agent")
     
     async def _read_agents(self) -> List[Dict]:
-        """Read agents from JSON file"""
-        async with _file_lock:
-            try:
-                if not AGENTS_FILE.exists():
-                    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    AGENTS_FILE.write_text("[]")
-                    return []
-                
-                with open(AGENTS_FILE, "r") as f:
-                    data = json.load(f)
-                    
-                    # Ensure we return a list, not a dict
-                    if isinstance(data, dict):
-                        logger.warning("agents.json contains dict instead of list, resetting to empty list")
-                        AGENTS_FILE.write_text("[]")
-                        return []
-                    
-                    return data
-            except Exception as e:
-                logger.error("Failed to read agents file: %s", str(e))
-                return []
+        """Read agents from Redis"""
+        try:
+            agents_data = await self.redis.get_all_json("*")
+            # Convert dict to list format
+            agents_list = list(agents_data.values())
+            logger.debug("Loaded %d agents from Redis", len(agents_list))
+            return agents_list
+        except Exception as e:
+            logger.error("Failed to read agents from Redis: %s", str(e))
+            return []
     
-    async def _write_agents(self, agents: List[Dict]):
-        """Write agents to JSON file atomically"""
-        async with _file_lock:
-            try:
-                AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Write to temp file first, then rename (atomic on POSIX)
-                temp_file = AGENTS_FILE.with_suffix(".tmp")
-                with open(temp_file, "w") as f:
-                    json.dump(agents, f, indent=2)
-                
-                temp_file.replace(AGENTS_FILE)
-                logger.debug("Agents file updated successfully")
-            except Exception as e:
-                logger.error("Failed to write agents file: %s", str(e))
-                raise
+    async def _save_agent(self, agent: AgentData):
+        """Save a single agent to Redis"""
+        try:
+            success = await self.redis.set_json(agent.id, agent.to_dict())
+            if success:
+                logger.debug("Saved agent to Redis: %s", agent.id)
+            else:
+                logger.error("Failed to save agent to Redis: %s", agent.id)
+        except Exception as e:
+            logger.error("Failed to save agent to Redis: %s", str(e))
+            raise
+    
+    async def _delete_agent_from_redis(self, agent_id: str) -> bool:
+        """Delete an agent from Redis"""
+        try:
+            return await self.redis.delete(agent_id)
+        except Exception as e:
+            logger.error("Failed to delete agent from Redis: %s", str(e))
+            return False
     
     def _get_interview_type_guidance(self, interview_type: str) -> str:
         """Get specific guidance based on interview type"""
@@ -346,12 +337,10 @@ class AgentsService:
                 eleven_agent_id=eleven_agent_id,
             )
             
-            # Persist to file
-            agents = await self._read_agents()
-            agents.append(agent.to_dict())
-            await self._write_agents(agents)
+            # Persist to Redis
+            await self._save_agent(agent)
             
-            logger.info("Agent persisted locally: id=%s", agent.id)
+            logger.info("Agent persisted to Redis: id=%s", agent.id)
             return agent
             
         except httpx.HTTPStatusError as e:
@@ -470,12 +459,10 @@ class AgentsService:
             # Update timestamp
             agent.updated_at = datetime.utcnow().isoformat()
             
-            # Persist to file
-            agents = [a for a in agents if a["id"] != agent_id]
-            agents.append(agent.to_dict())
-            await self._write_agents(agents)
+            # Persist to Redis
+            await self._save_agent(agent)
             
-            logger.info("Agent updated locally: id=%s", agent_id)
+            logger.info("Agent updated in Redis: id=%s", agent_id)
             return agent
             
         except httpx.HTTPStatusError as e:
@@ -501,7 +488,7 @@ class AgentsService:
         return [AgentData.from_dict(a) for a in agents]
     
     async def delete_agent(self, agent_id: str) -> bool:
-        """Delete an agent from both local storage and ElevenLabs"""
+        """Delete an agent from both Redis and ElevenLabs"""
         # Load agent to get ElevenLabs ID
         agents = await self._read_agents()
         agent_dict = next((a for a in agents if a["id"] == agent_id), None)
@@ -541,11 +528,10 @@ class AgentsService:
                 logger.error("Failed to delete agent from ElevenLabs: %s", str(e))
                 raise
         
-        # Delete from local storage
-        agents = [a for a in agents if a["id"] != agent_id]
-        await self._write_agents(agents)
+        # Delete from Redis
+        await self._delete_agent_from_redis(agent_id)
         
-        logger.info("Agent deleted locally and from ElevenLabs: id=%s", agent_id)
+        logger.info("Agent deleted from Redis and ElevenLabs: id=%s", agent_id)
         return True
 
 
