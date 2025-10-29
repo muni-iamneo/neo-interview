@@ -6,3 +6,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Storage files (agents, sessions, etc.)
+backend/app/storage/*.json
