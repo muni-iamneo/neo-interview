@@ -292,6 +292,19 @@ class ElevenLabsVoiceHandler:
                     continue
                 
         except Exception as e:
+            # Handle graceful close (code 1000) without surfacing an error to the client
+            try:
+                from websockets.exceptions import ConnectionClosedOK  # type: ignore
+            except Exception:  # pragma: no cover - compatibility
+                ConnectionClosedOK = tuple()  # type: ignore
+
+            if isinstance(e, ConnectionClosedOK) or "1000" in str(e):
+                logger.info("[EL] Send skipped after close (1000 OK): %s", str(e))
+                self.is_connected = False
+                self._successful_payload_format = None
+                asyncio.create_task(self.connect())
+                return
+
             logger.error("[EL] Failed to send audio chunk: %s", str(e))
             await self._notify("error", f"Failed to send audio: {str(e)}")
             
