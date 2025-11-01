@@ -167,3 +167,15 @@ class RedisStorage:
                 result[key] = value
         return result
 
+    async def ttl(self, key: str) -> Optional[int]:
+        """Get remaining TTL (time to live) for a key in seconds"""
+        client = await get_redis_client()
+        if not client:
+            return None
+        try:
+            ttl_value = await client.ttl(self._make_key(key))
+            return ttl_value if ttl_value > 0 else None
+        except Exception as e:
+            logger.error("Redis TTL error for key %s: %s", key, str(e))
+            return None
+

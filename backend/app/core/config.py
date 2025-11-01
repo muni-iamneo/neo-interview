@@ -54,6 +54,21 @@ class Settings(BaseSettings):
     ELEVENLABS_WEBSOCKET_URL: str = Field(
         default="wss://api.elevenlabs.io/v1/convai/conversation"
     )
+    ELEVENLABS_CONVERSATIONS_API_URL: str = Field(
+        default="https://api.elevenlabs.io/v1/convai/conversations"
+    )
+    ELEVENLABS_MIN_CONVERSATION_DURATION_SECS: int = Field(
+        default=90,
+        description="Minimum conversation duration in seconds to include in results"
+    )
+
+    # Azure OpenAI Configuration (for interview analysis)
+    AZURE_ENDPOINT: str = Field(default="")
+    OPENAI_API_TYPE: str = Field(default="azure")
+    AZURE_OPENAI_API_KEY: str = Field(default="")
+    AZURE_OPENAI_MODEL: str = Field(default="gpt-4.1-mini")
+    AZURE_OPENAI_DEPLOYMENT: str = Field(default="gpt-4.1-mini-hire")
+    OPENAI_API_VERSION: str = Field(default="2025-01-01-preview")
     
     # Audio Configuration
     AUDIO_SAMPLE_RATE: int = Field(default=16000)
@@ -79,6 +94,11 @@ class Settings(BaseSettings):
     # JWT Configuration
     JWT_DEFAULT_TTL_SECONDS: int = Field(default=3600)
     JWT_MAX_TTL_SECONDS: int = Field(default=86400)
+
+    # Links Configuration
+    MOD_TOKEN_SECRET: str = Field(default="change-me-in-production")
+    LINK_TTL_MINUTES: int = Field(default=1440)  # 24 hours default
+    AGENT_MAX_LINKS: int = Field(default=5)
     
     # Redis Configuration
     CACHE_BACKEND_URL: Optional[str] = Field(default=None, description="Redis URL for cache/storage")

@@ -101,6 +101,13 @@ class ElevenLabsVoiceHandler:
         try:
             evt_type = data.get("type")
             if evt_type == "conversation_initiation_metadata":
+                # Extract and log conversation ID if present
+                conversation_id = data.get("conversation_id") or data.get("conversationId") or data.get("id")
+                if conversation_id:
+                    logger.info("[EL] Conversation ID: %s", conversation_id)
+                else:
+                    logger.debug("[EL] Conversation initiation metadata received (no conversation_id found): %s", list(data.keys()))
+                
                 await self._notify("status", data)
                 if not self._conversation_ready:
                     self._conversation_ready = True

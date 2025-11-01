@@ -87,6 +87,77 @@ export interface SessionInfo {
   updatedAt: string;
 }
 
+export interface CreateLinkRequest {
+  agentId: string;
+  maxMinutes?: number;
+  ttlMinutes?: number;
+}
+
+export interface CreateLinkResponse {
+  sessionId: string;
+  candidateUrl: string;
+  moderatorUrl: string;
+  meetingUrl: string;
+  roomName: string;
+  expiresAt: string;
+}
+
+export interface LinkInfo {
+  session_id: string;
+  agent_id: string;
+  status: string;
+  created_at: string;
+  expires_at?: string;
+  started_at?: number;
+  ended_at?: number;
+  meeting_url?: string;
+  room_name?: string;
+}
+
+export interface ConversationInfo {
+  conversation_id: string;
+  agent_id: string;
+  start_time: string;
+  call_duration_secs: number;
+  status: string;
+}
+
+export interface TranscriptSegment {
+  role: string;
+  message: string;
+  timestamp?: number;
+}
+
+export interface ConversationDetails {
+  conversation_id: string;
+  agent_id: string;
+  transcript: TranscriptSegment[];
+  formatted_transcript: string;
+  metadata: { [key: string]: any };
+}
+
+export interface AnalysisResult {
+  conversation_id: string;
+  agent_id?: string;
+  analysis: {
+    hiring_recommendation: 'hire' | 'no-hire' | 'consider';
+    subject_knowledge: { [subject: string]: string };
+    reasoning: string;
+    strengths: string[];
+    concerns: string[];
+  };
+  generated_at: string;
+}
+
+export interface ConversationsListResponse {
+  conversations: ConversationInfo[];
+  next_cursor: string | null;
+}
+
+export interface AnalyzeRequest {
+  force_regenerate?: boolean;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -213,6 +284,93 @@ export class ApiService {
   getAgentSessionHistory(agentId: string): Observable<{ agentId: string; sessions: SessionInfo[]; totalCount: number }> {
     return this.http.get<{ agentId: string; sessions: SessionInfo[]; totalCount: number }>(
       this.config.getApiUrl(`/voice/sessions/agent/${agentId}/history`)
+    );
+  }
+
+  /**
+   * Create a new interview link
+   */
+  createLink(request: CreateLinkRequest): Observable<CreateLinkResponse> {
+    return this.http.post<CreateLinkResponse>(
+      this.config.getApiUrl('/api/links'),
+      request
+    );
+  }
+
+  /**
+   * List links for an agent
+   */
+  listAgentLinks(agentId: string, statusFilter?: string, limit: number = 10): Observable<LinkInfo[]> {
+    let url = this.config.getApiUrl(`/api/links/agent/${agentId}?limit=${limit}`);
+    if (statusFilter) {
+      url += `&status_filter=${statusFilter}`;
+    }
+    return this.http.get<LinkInfo[]>(url);
+  }
+
+  /**
+   * Get a specific link
+   */
+  getLink(sessionId: string): Observable<LinkInfo> {
+    return this.http.get<LinkInfo>(
+      this.config.getApiUrl(`/api/links/${sessionId}`)
+    );
+  }
+
+  /**
+   * Delete/cancel a link
+   */
+  deleteLink(sessionId: string): Observable<void> {
+    return this.http.delete<void>(
+      this.config.getApiUrl(`/api/links/${sessionId}`)
+    );
+  }
+
+  /**
+   * List conversations for an agent (with pagination)
+   */
+  listAgentConversations(agentId: string, cursor?: string, pageSize: number = 30): Observable<ConversationsListResponse> {
+    let url = this.config.getApiUrl(`/api/conversations/agent/${agentId}?page_size=${pageSize}`);
+    if (cursor) {
+      url += `&cursor=${cursor}`;
+    }
+    return this.http.get<ConversationsListResponse>(url);
+  }
+
+  /**
+   * Get conversation details with transcript
+   */
+  getConversationDetails(conversationId: string): Observable<ConversationDetails> {
+    return this.http.get<ConversationDetails>(
+      this.config.getApiUrl(`/api/conversations/${conversationId}`)
+    );
+  }
+
+  /**
+   * Generate AI analysis for a conversation
+   */
+  generateAnalysis(conversationId: string, forceRegenerate: boolean = false): Observable<AnalysisResult> {
+    return this.http.post<AnalysisResult>(
+      this.config.getApiUrl(`/api/conversations/${conversationId}/analyze`),
+      { force_regenerate: forceRegenerate }
+    );
+  }
+
+  /**
+   * Get stored analysis for a conversation
+   */
+  getAnalysis(conversationId: string): Observable<AnalysisResult> {
+    return this.http.get<AnalysisResult>(
+      this.config.getApiUrl(`/api/conversations/${conversationId}/analysis`)
+    );
+  }
+
+  /**
+   * Delete stored analysis
+   */
+  deleteAnalysis(conversationId: string): Observable<void> {
+    return this.http.delete<void>(
+      this.config.getApiUrl(`/api/conversations/${conversationId}/analysis`)
     );
   }
 }

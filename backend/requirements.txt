@@ -34,3 +34,7 @@ idna==3.10
 # Redis
 redis==7.0.1
 hiredis==3.3.0
+
+# AutoGen for Azure OpenAI Integration
+autogen-core==0.6.0
+autogen-ext[openai,azure]==0.6.0

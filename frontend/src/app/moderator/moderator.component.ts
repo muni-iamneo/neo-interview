@@ -1,6 +1,7 @@
 import { Component, signal, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule, TitleCasePipe } from '@angular/common';
+import { Router } from '@angular/router';
 
 import { ApiService, JWTRequest, AgentResponse, CreateAgentRequest, SessionInfo } from '../services/api.service';
 import { ConfigService } from '../services/config.service';
@@ -71,7 +72,8 @@ export class ModeratorComponent implements OnInit, OnDestroy {
 
   constructor(
     private apiService: ApiService,
-    private config: ConfigService
+    private config: ConfigService,
+    private router: Router
   ) {}
 
   ngOnInit(): void {
@@ -432,5 +434,9 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     } catch (err: any) {
       this.showToast(`Failed to resume session: ${err.message || 'Unknown error'}`, 'error');
     }
+  }
+
+  navigateToStudio(): void {
+    this.router.navigate(['/studio']);
   }
 }

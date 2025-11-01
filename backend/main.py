@@ -30,6 +30,8 @@ from app.services.redis_service import close_redis_client
 # Import API routers
 from app.api.agents_router import router as agents_router
 from app.api.session_router import router as session_router
+from app.api.links_router import router as links_router
+from app.api.conversations_router import router as conversations_router
 
 # Initialize settings, logger, and services
 settings = get_settings()
@@ -71,6 +73,8 @@ app.add_middleware(
 # Include API routers
 app.include_router(agents_router)
 app.include_router(session_router)
+app.include_router(links_router)
+app.include_router(conversations_router)
 
 
 def get_private_key() -> Optional[any]:
@@ -182,6 +186,28 @@ async def mint_jwt(body: dict):
     room = body["room"]
     user = body["user"]
     features = body.get("features", {"transcription": True})
+
+    # Check for moderator token and validate
+    mod_tok = body.get("modTok")
+    is_moderator = False
+    if mod_tok and session_id:
+        from app.services.links_service import get_links_service
+        links_service = get_links_service()
+        is_moderator = links_service.verify_modtok(session_id, mod_tok)
+        if is_moderator:
+            logger.info("Valid moderator token for session %s", session_id)
+            # Add role to user context
+            user = {**user, "role": "moderator"}
+        else:
+            logger.warning("Invalid moderator token for session %s", session_id)
+
+    # Update link status to active if this is first join with valid link
+    if session_id and not is_rejoin:
+        from app.services.links_service import get_links_service
+        links_service = get_links_service()
+        link = await links_service.get_link(session_id)
+        if link and link.status == "pending":
+            await links_service.update_link_status(session_id, "active", started_at=int(time.time()))
     
     # Calculate TTL: use provided ttlSec, or calculate from session config if available
     provided_ttl = body.get("ttlSec")

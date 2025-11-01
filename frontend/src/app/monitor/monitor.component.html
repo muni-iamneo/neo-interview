@@ -1,0 +1,10 @@
+<!-- Silent redirect for moderator - no UI needed -->
+<div *ngIf="error()" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+  <div style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); max-width: 500px; text-align: center;">
+    <h2 style="color: #dc3545; margin: 0 0 20px 0;">Moderator Access Denied</h2>
+    <p style="color: #666; margin-bottom: 20px;">{{ error() }}</p>
+    <a href="/studio" style="display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+      Go to Agents Studio
+    </a>
+  </div>
+</div>
