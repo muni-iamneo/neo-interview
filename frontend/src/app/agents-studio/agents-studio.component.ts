@@ -13,6 +13,8 @@ import {
   ConversationDetails,
   AnalysisResult,
 } from '../services/api.service';
+import { ToastService } from '../services/toast.service';
+import { ToastComponent } from '../components/toast/toast.component';
 
 interface LinkWithAgent extends LinkInfo {
   agentName?: string;
@@ -21,7 +23,7 @@ interface LinkWithAgent extends LinkInfo {
 @Component({
   selector: 'app-agents-studio',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ToastComponent],
   templateUrl: './agents-studio.component.html',
   styleUrls: ['./agents-studio.component.css'],
 })
@@ -40,7 +42,7 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   ttlMinutes = signal<number | null>(null);
 
   // Tabs state
-  activeTab = signal<'links' | 'details' | 'conversations'>('links');
+  activeTab = signal<'links' | 'details' | 'conversations'>('details');
   detailsTab = signal<'overview' | 'configuration' | 'history'>('overview');
 
   // Session Status and History
@@ -101,9 +103,14 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   // Available page size options
   pageSizeOptions = [5, 10, 20, 30, 50];
 
+  // Search functionality
+  searchQuery = signal<string>('');
+  filteredAgents = signal<AgentResponse[]>([]);
+
   constructor(
     private apiService: ApiService,
-    private router: Router
+    private router: Router,
+    private toastService: ToastService
   ) {}
 
   ngOnInit() {
@@ -124,6 +131,7 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.apiService.listAgents().subscribe({
       next: (agents) => {
         this.agents.set(agents);
+        this.filteredAgents.set(agents);
         this.loading.set(false);
 
         // Auto-select the first agent if available and none selected
@@ -139,12 +147,31 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     });
   }
 
+  filterAgents(query: string) {
+    this.searchQuery.set(query);
+    const lowerQuery = query.toLowerCase().trim();
+
+    if (!lowerQuery) {
+      this.filteredAgents.set(this.agents());
+      return;
+    }
+
+    const filtered = this.agents().filter(agent =>
+      agent.name.toLowerCase().includes(lowerQuery) ||
+      agent.role.toLowerCase().includes(lowerQuery) ||
+      agent.interviewType.toLowerCase().replace('_', ' ').includes(lowerQuery)
+    );
+
+    this.filteredAgents.set(filtered);
+  }
+
   selectAgent(agent: AgentResponse) {
     this.selectedAgent.set(agent);
-    this.loadAgentLinks(agent.id);
 
-    // Load conversations if conversations tab is active
-    if (this.activeTab() === 'conversations') {
+    // Lazy load content based on active tab
+    if (this.activeTab() === 'links') {
+      this.loadAgentLinks(agent.id);
+    } else if (this.activeTab() === 'conversations') {
       this.loadConversations(agent.elevenAgentId || agent.id, 1, null);
     }
   }
@@ -234,11 +261,13 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
           this.loadAgentLinks(agent.id);
         }
         this.loading.set(false);
+        this.toastService.success('Link cancelled successfully');
       },
       error: (err) => {
         console.error('Error deleting link:', err);
         this.error.set('Failed to delete link');
         this.loading.set(false);
+        this.toastService.error('Failed to cancel link');
       },
     });
   }
@@ -247,11 +276,11 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     const fullUrl = `${window.location.origin}${text}`;
     navigator.clipboard.writeText(fullUrl).then(
       () => {
-        alert(`${type} URL copied to clipboard!`);
+        this.toastService.success(`${type} URL copied to clipboard!`);
       },
       (err) => {
         console.error('Failed to copy:', err);
-        alert('Failed to copy URL');
+        this.toastService.error('Failed to copy URL');
       }
     );
   }
@@ -395,15 +424,15 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   async resumeCurrentSession(): Promise<void> {
     const sessionId = sessionStorage.getItem('currentSessionId') || '';
     if (!sessionId) {
-      alert('No active session found');
+      this.toastService.warning('No active session found');
       return;
     }
     try {
       await this.apiService.resumeSession(sessionId).toPromise();
-      alert('Session resumed successfully');
+      this.toastService.success('Session resumed successfully');
       this.monitorVoiceSession();
     } catch (err: any) {
-      alert(`Failed to resume session: ${err.message || 'Unknown error'}`);
+      this.toastService.error(`Failed to resume session: ${err.message || 'Unknown error'}`);
     }
   }
 
@@ -519,9 +548,13 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   setActiveTab(tab: 'links' | 'details' | 'conversations'): void {
     this.activeTab.set(tab);
 
-    // Load conversations when switching to conversations tab
-    if (tab === 'conversations' && this.selectedAgent()) {
-      const agent = this.selectedAgent()!;
+    const agent = this.selectedAgent();
+    if (!agent) return;
+
+    // Lazy load content when switching tabs
+    if (tab === 'links') {
+      this.loadAgentLinks(agent.id);
+    } else if (tab === 'conversations') {
       this.loadConversations(agent.elevenAgentId || agent.id, 1, null);
     }
   }

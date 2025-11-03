@@ -1,4 +1,7 @@
 <div class="studio-container">
+  <!-- Toast Notifications -->
+  <app-toast></app-toast>
+
   <header class="studio-header">
     <h1>Agents Studio</h1>
     <button class="btn-secondary" (click)="navigateToModeratorView()">
@@ -32,111 +35,32 @@
         </button>
       </div>
 
+      <!-- Search Bar -->
+      <div class="search-bar" *ngIf="!showCreateAgentForm()">
+        <svg class="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        </svg>
+        <input
+          type="text"
+          class="search-input"
+          placeholder="Search agents by name, role, or type..."
+          [value]="searchQuery()"
+          (input)="filterAgents($any($event.target).value)"
+        />
+        <button
+          *ngIf="searchQuery()"
+          class="search-clear"
+          (click)="filterAgents('')"
+          title="Clear search">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
       <div class="panel-body-agents">
-        <!-- Create Agent Form -->
-        <div *ngIf="showCreateAgentForm()" class="create-form">
-          <div class="form-header">
-            <button class="btn-back" (click)="toggleCreateAgentForm()">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-              </svg>
-              Back
-            </button>
-            <h3 class="form-title">Create New Agent</h3>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label class="label">Agent Name <span class="required">*</span></label>
-              <input
-                type="text"
-                [(ngModel)]="agentForm.name"
-                class="input"
-                placeholder="e.g., Senior Developer Interviewer">
-            </div>
-          </div>
-
-          <div class="form-row form-row-2">
-            <div class="form-group">
-              <label class="label">Interview Role <span class="required">*</span></label>
-              <input
-                type="text"
-                [(ngModel)]="agentForm.role"
-                class="input"
-                placeholder="e.g., Senior Backend Engineer">
-            </div>
-
-            <div class="form-group">
-              <label class="label">Interview Type <span class="required">*</span></label>
-              <select [(ngModel)]="agentForm.interviewType" class="select">
-                <option *ngFor="let type of interviewTypes" [value]="type.value">{{ type.label }}</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label class="label">Duration (minutes) <span class="required">*</span></label>
-              <input
-                type="number"
-                [(ngModel)]="agentForm.maxInterviewMinutes"
-                min="5"
-                max="180"
-                class="input">
-              <small class="hint">Between 5 and 180 minutes</small>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label class="label">Job Description <span class="required">*</span></label>
-              <textarea
-                [(ngModel)]="agentForm.jobDescription"
-                rows="6"
-                class="textarea"
-                placeholder="Enter the full job description..."></textarea>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label class="label">
-                Custom System Prompt
-                <span class="optional">(Optional)</span>
-              </label>
-              <textarea
-                [(ngModel)]="agentForm.systemPrompt"
-                rows="8"
-                class="textarea textarea-mono"
-                placeholder="Leave blank for auto-generated prompt based on interview type&#10;&#10;Or customize to define specific interview style, structure, and questions..."></textarea>
-              <small class="hint">
-                <svg class="hint-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-                Time-tracking instructions are automatically added
-              </small>
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <button
-              (click)="createAgent()"
-              [disabled]="isCreatingAgent()"
-              class="btn btn-success">
-              <span *ngIf="isCreatingAgent()">
-                <svg class="btn-icon spinner" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Creating...
-              </span>
-              <span *ngIf="!isCreatingAgent()">Create Agent</span>
-            </button>
-          </div>
-        </div>
-
         <!-- Agents List -->
-        <div *ngIf="!showCreateAgentForm()" class="agents-list">
+        <div class="agents-list">
           <div *ngIf="loading() && agents().length === 0" class="loading-state">
             <svg class="spinner-large" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -153,9 +77,17 @@
             <p>Create your first interview agent to get started</p>
           </div>
 
+          <div *ngIf="!loading() && agents().length > 0 && filteredAgents().length === 0" class="empty-state">
+            <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+            <h3>No Agents Found</h3>
+            <p>No agents match your search criteria</p>
+          </div>
+
           <div
-            *ngFor="let agent of agents()"
-            class="agent-card-full"
+            *ngFor="let agent of filteredAgents()"
+            class="agent-card-compact"
             [class.agent-card-selected]="selectedAgent()?.id === agent.id"
             (click)="selectAgent(agent)"
           >
@@ -183,22 +115,6 @@
               <span class="badge badge-type">{{ agent.interviewType.replace('_', ' ') }}</span>
               <span class="badge badge-duration">{{ agent.maxInterviewMinutes }} min</span>
             </div>
-
-            <p class="agent-description">{{ agent.jobDescription.substring(0, 120) }}{{ agent.jobDescription.length > 120 ? '...' : '' }}</p>
-
-            <div *ngIf="agent.systemPrompt" class="agent-badge">
-              <svg class="badge-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-              </svg>
-              Custom Prompt
-            </div>
-
-            <button
-              class="btn-create-link"
-              (click)="openCreateModal(agent); $event.stopPropagation()"
-            >
-              + Create Link
-            </button>
           </div>
         </div>
       </div>
@@ -271,12 +187,19 @@
           </div>
         </div>
 
-        <!-- Agent Details with Sub-tabs -->
-        <!-- <div class="panel-header">
+        <!-- Agent Details with Actions -->
+        <div class="panel-header">
           <h2 class="panel-title">Agent Details</h2>
-        </div> -->
-
-     
+          <button
+            class="btn btn-primary btn-sm"
+            (click)="openCreateModal(selectedAgent()!)"
+            title="Create interview link">
+            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Create Link
+          </button>
+        </div>
 
         <div class="panel-body">
           <!-- Overview Tab -->
@@ -339,57 +262,108 @@
           </div>
 
           <div class="links-list">
-            <div *ngFor="let link of agentLinks()" class="link-card">
-              <div class="link-header">
-                <span class="link-id">{{ link.session_id.substring(0, 8) }}...</span>
-                <span class="badge" [ngClass]="getStatusBadgeClass(link.status)">
+            <div *ngFor="let link of agentLinks()" class="link-card-redesign">
+              <!-- Card Header -->
+              <div class="link-card-header">
+                <div class="link-header-info">
+                  <h4 class="link-session-title">
+                    <svg class="link-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                    </svg>
+                    Session: {{ link.session_id.substring(0, 16) }}...
+                  </h4>
+                  <p class="link-room-name" *ngIf="link.meeting_url">
+                    <svg class="room-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                    Room: <code class="url-code-inline">{{ link.room_name }}</code>
+                  </p>
+                </div>
+                <span class="badge badge-lg" [ngClass]="getStatusBadgeClass(link.status)">
                   {{ link.status }}
                 </span>
               </div>
 
-              <div class="link-details">
-                <p><strong>Created:</strong> {{ formatDate(link.created_at) }}</p>
-                <p *ngIf="link.meeting_url" class="meeting-url">
-                  <strong>Meeting:</strong>
-                  <code class="url-code">{{ link.room_name }}</code>
-                </p>
-                <p *ngIf="link.expires_at">
-                  <strong>Expires:</strong> {{ formatDate(link.expires_at) }}
-                </p>
-                <p *ngIf="link.started_at">
-                  <strong>Started:</strong>
-                  {{ formatTimestamp(link.started_at) }}
-                </p>
-                <p *ngIf="link.ended_at">
-                  <strong>Ended:</strong>
-                  {{ formatTimestamp(link.ended_at) }}
-                </p>
+              <!-- Card Body -->
+              <div class="link-card-body">
+                <div class="link-details-grid">
+                  <div class="detail-row">
+                    <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    <div class="detail-content">
+                      <span class="detail-label-small">Created</span>
+                      <span class="detail-value-small">{{ formatDate(link.created_at) }}</span>
+                    </div>
+                  </div>
+                  <div class="detail-row" *ngIf="link.expires_at">
+                    <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <div class="detail-content">
+                      <span class="detail-label-small">Expires</span>
+                      <span class="detail-value-small">{{ formatDate(link.expires_at) }}</span>
+                    </div>
+                  </div>
+                  <div class="detail-row" *ngIf="link.started_at">
+                    <svg class="detail-icon detail-icon-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <div class="detail-content">
+                      <span class="detail-label-small">Started</span>
+                      <span class="detail-value-small">{{ formatTimestamp(link.started_at) }}</span>
+                    </div>
+                  </div>
+                  <div class="detail-row" *ngIf="link.ended_at">
+                    <svg class="detail-icon detail-icon-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                    </svg>
+                    <div class="detail-content">
+                      <span class="detail-label-small">Ended</span>
+                      <span class="detail-value-small">{{ formatTimestamp(link.ended_at) }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div class="link-actions">
-                <button
-                  class="btn-copy-small"
-                  (click)="copyToClipboard(link.meeting_url!, 'Meeting URL')"
-                  *ngIf="link.meeting_url"
-                  title="Copy Jitsi meeting URL"
-                >
-                  Copy Link
-                </button>
-                <button
-                  class="btn-join"
-                  (click)="joinSession(link.session_id)"
-                  *ngIf="link.status === 'pending' || link.status === 'active'"
-                >
-                  Join Meeting
-                </button>
-                <button
-                  class="btn-delete"
-                  (click)="deleteLink(link.session_id)"
-                  [disabled]="loading()"
-                  *ngIf="link.status === 'pending'"
-                >
-                  Cancel
-                </button>
+              <!-- Card Footer -->
+              <div class="link-card-footer">
+                <div class="link-actions-redesign">
+                  <button
+                    class="btn btn-sm btn-success"
+                    (click)="copyToClipboard(link.meeting_url!, 'Meeting URL')"
+                    *ngIf="link.meeting_url"
+                    title="Copy Jitsi meeting URL"
+                  >
+                    <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                    Copy Link
+                  </button>
+                  <button
+                    class="btn btn-sm btn-primary"
+                    (click)="joinSession(link.session_id)"
+                    *ngIf="link.status === 'pending' || link.status === 'active'"
+                  >
+                    <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                    Join Meeting
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    (click)="deleteLink(link.session_id)"
+                    [disabled]="loading()"
+                    *ngIf="link.status === 'pending'"
+                  >
+                    <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -685,119 +659,108 @@
     </div>
   </div>
 
-  <!-- Conversation Details Modal -->
+  <!-- Conversation Details Modal - Chat-Style Interface -->
   <div class="modal-overlay conversation-modal-overlay" *ngIf="selectedConversation() && conversationDetails()" (click)="closeConversationModal()">
-    <div class="modal-content conversation-modal-content" (click)="$event.stopPropagation()">
-      <!-- Modal Header -->
-      <div class="modal-header">
-        <div class="header-left">
-          <h2>Conversation Analysis</h2>
-          <div class="conversation-meta-badges">
-            <span class="meta-badge">
-              <svg class="badge-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
-              </svg>
-              ID: {{ selectedConversation()!.conversation_id.substring(0, 8) }}
-            </span>
-            <span class="meta-badge">
-              <svg class="badge-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-              </svg>
-              {{ formatDateTime(selectedConversation()!.start_time) }}
-            </span>
-            <span class="meta-badge">
-              <svg class="badge-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              {{ formatDuration(selectedConversation()!.call_duration_secs) }}
-            </span>
+    <div class="chat-modal-container" (click)="$event.stopPropagation()">
+
+      <!-- Left Sidebar - Conversation Metadata -->
+      <div class="chat-sidebar">
+        <div class="sidebar-header">
+          <h3>Interview Details</h3>
+          <button class="close-btn-minimal" (click)="closeConversationModal()">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="sidebar-content">
+          <div class="meta-section">
+            <div class="meta-label">Conversation ID</div>
+            <div class="meta-value meta-mono">{{ selectedConversation()!.conversation_id.substring(0, 16) }}</div>
+          </div>
+
+          <div class="meta-section">
+            <div class="meta-label">Started</div>
+            <div class="meta-value">{{ formatDateTime(selectedConversation()!.start_time) }}</div>
+          </div>
+
+          <div class="meta-section">
+            <div class="meta-label">Duration</div>
+            <div class="meta-value">{{ formatDuration(selectedConversation()!.call_duration_secs) }}</div>
+          </div>
+
+          <div class="meta-section">
+            <div class="meta-label">Status</div>
+            <div class="meta-value">
+              <span class="status-tag" [ngClass]="'status-tag-' + selectedConversation()!.status">
+                {{ selectedConversation()!.status | uppercase }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Quick Summary (if analysis exists) -->
+          <div *ngIf="conversationAnalysis()" class="meta-section meta-section-highlight">
+            <div class="meta-label">AI Recommendation</div>
+            <div class="meta-value">
+              <span class="recommendation-badge"
+                    [ngClass]="getRecommendationBadgeClass(conversationAnalysis()!.analysis.hiring_recommendation)">
+                {{ conversationAnalysis()!.analysis.hiring_recommendation }}
+              </span>
+            </div>
+          </div>
+
+          <div *ngIf="conversationAnalysis()" class="quick-stats">
+            <div class="stat-item">
+              <div class="stat-number">{{ getObjectKeys(conversationAnalysis()!.analysis.subject_knowledge).length }}</div>
+              <div class="stat-label">Topics</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-number stat-success">{{ conversationAnalysis()!.analysis.strengths.length }}</div>
+              <div class="stat-label">Strengths</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-number stat-warning">{{ conversationAnalysis()!.analysis.concerns.length }}</div>
+              <div class="stat-label">Concerns</div>
+            </div>
           </div>
         </div>
-        <button class="close-btn" (click)="closeConversationModal()">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
-        </button>
       </div>
 
-      <!-- Modal Body -->
-      <div class="modal-body">
-        <!-- Summary Scorecard (Always visible at top if analysis exists) -->
-        <div *ngIf="conversationAnalysis()" class="summary-scorecard">
-          <div class="scorecard-item recommendation-item">
-            <svg class="scorecard-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
-            </svg>
-            <div class="scorecard-content">
-              <div class="scorecard-label">Recommendation</div>
-              <div class="scorecard-value">
-                <span class="badge badge-lg"
-                      [ngClass]="getRecommendationBadgeClass(conversationAnalysis()!.analysis.hiring_recommendation)">
-                  {{ conversationAnalysis()!.analysis.hiring_recommendation | uppercase }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="scorecard-item">
-            <svg class="scorecard-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-            </svg>
-            <div class="scorecard-content">
-              <div class="scorecard-label">Subject Areas</div>
-              <div class="scorecard-value scorecard-number">{{ getObjectKeys(conversationAnalysis()!.analysis.subject_knowledge).length }}</div>
-            </div>
-          </div>
-
-          <div class="scorecard-item">
-            <svg class="scorecard-icon scorecard-icon-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <div class="scorecard-content">
-              <div class="scorecard-label">Strengths</div>
-              <div class="scorecard-value scorecard-number">{{ conversationAnalysis()!.analysis.strengths.length }}</div>
-            </div>
-          </div>
-
-          <div class="scorecard-item">
-            <svg class="scorecard-icon scorecard-icon-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-            </svg>
-            <div class="scorecard-content">
-              <div class="scorecard-label">Concerns</div>
-              <div class="scorecard-value scorecard-number">{{ conversationAnalysis()!.analysis.concerns.length }}</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab Navigation -->
-        <div class="tabs">
-          <button class="tab"
-                  [class.tab-active]="conversationActiveTab() === 'transcript'"
-                  (click)="conversationActiveTab.set('transcript')">
-            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <!-- Main Chat Area -->
+      <div class="chat-main">
+        <!-- Minimal Top Info Bar -->
+        <div class="chat-header">
+          <div class="chat-title">
+            <svg class="chat-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
             </svg>
-            Transcript
-          </button>
-          <button class="tab"
-                  [class.tab-active]="conversationActiveTab() === 'analysis'"
-                  (click)="conversationActiveTab.set('analysis')">
-            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-            </svg>
-            AI Analysis
-          </button>
+            <span>Interview Conversation</span>
+          </div>
+          <div class="chat-mode-toggle">
+            <button class="mode-btn"
+                    [class.mode-btn-active]="conversationActiveTab() === 'transcript'"
+                    (click)="conversationActiveTab.set('transcript')">
+              Transcript
+            </button>
+            <button class="mode-btn"
+                    [class.mode-btn-active]="conversationActiveTab() === 'analysis'"
+                    (click)="conversationActiveTab.set('analysis')">
+              AI Analysis
+            </button>
+          </div>
         </div>
 
-        <!-- Transcript Tab Content -->
-        <div *ngIf="conversationActiveTab() === 'transcript'" class="tab-content">
-          <div class="conversation-transcript">
+        <!-- Scrollable Content Area -->
+        <div class="chat-content">
+
+          <!-- Transcript View - Chat Style -->
+          <div *ngIf="conversationActiveTab() === 'transcript'" class="chat-transcript">
             <div *ngFor="let segment of conversationDetails()!.transcript; let i = index"
-                 class="message-row"
-                 [class.message-agent]="segment.role === 'agent'"
-                 [class.message-user]="segment.role === 'user'">
-              <div class="message-avatar">
+                 class="chat-message"
+                 [class.chat-message-agent]="segment.role === 'agent'"
+                 [class.chat-message-user]="segment.role === 'user'">
+              <div class="chat-message-avatar">
                 <svg *ngIf="segment.role === 'agent'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                 </svg>
@@ -805,149 +768,242 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
                 </svg>
               </div>
-              <div class="message-content">
-                <div class="message-header">
-                  <span class="message-sender">{{ segment.role === 'agent' ? 'Interviewer' : 'Candidate' }}</span>
-                  <span class="message-number">#{{ i + 1 }}</span>
-                </div>
-                <div class="message-text">{{ segment.message }}</div>
+              <div class="chat-message-bubble">
+                <div class="chat-message-sender">{{ segment.role === 'agent' ? 'Interviewer' : 'Candidate' }}</div>
+                <div class="chat-message-text">{{ segment.message }}</div>
               </div>
             </div>
+          </div>
+
+          <!-- Analysis View - Conversational AI Insights -->
+          <div *ngIf="conversationActiveTab() === 'analysis'" class="chat-analysis">
+
+            <!-- No Analysis State -->
+            <div *ngIf="!conversationAnalysis() && !isLoadingAnalysis()" class="chat-empty-state">
+              <svg class="empty-icon-minimal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+              </svg>
+              <h4>No AI Analysis Yet</h4>
+              <p>Generate an analysis to get insights on candidate performance</p>
+            </div>
+
+            <!-- Loading State -->
+            <div *ngIf="isLoadingAnalysis()" class="chat-loading-state">
+              <svg class="spinner-minimal" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <p>Analyzing conversation...</p>
+            </div>
+
+            <!-- Analysis Content -->
+            <div *ngIf="conversationAnalysis() && !isLoadingAnalysis()" class="analysis-flow">
+
+              <!-- Subject Knowledge - Conversational Style -->
+              <div class="analysis-section">
+                <div class="knowledge-section">
+                  <h4 class="section-title">What we found</h4>
+                  <div class="knowledge-tags">
+                    <span *ngFor="let subject of getObjectKeys(conversationAnalysis()!.analysis.subject_knowledge)"
+                          class="knowledge-tag"
+                          [attr.data-level]="conversationAnalysis()!.analysis.subject_knowledge[subject]">
+                      {{ subject }}
+                      <span class="level-indicator" [ngClass]="'level-' + conversationAnalysis()!.analysis.subject_knowledge[subject]">
+                        {{ conversationAnalysis()!.analysis.subject_knowledge[subject] }}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="content-divider"></div>
+
+              <!-- Reasoning - Flowing Text -->
+              <div class="analysis-section">
+                <h4 class="section-title">Our take</h4>
+                <div class="reasoning-text">{{ conversationAnalysis()!.analysis.reasoning }}</div>
+              </div>
+
+              <div class="content-divider"></div>
+
+              <!-- Strengths - List Style -->
+              <div class="analysis-section" *ngIf="conversationAnalysis()!.analysis.strengths.length > 0">
+                <h4 class="section-title-secondary">Strengths</h4>
+                <ul class="insight-list-minimal">
+                  <li *ngFor="let strength of conversationAnalysis()!.analysis.strengths" class="insight-positive">
+                    <svg class="insight-icon-minimal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    {{ strength }}
+                  </li>
+                </ul>
+              </div>
+
+              <div class="content-divider"></div>
+
+              <!-- Concerns - List Style -->
+              <div class="analysis-section" *ngIf="conversationAnalysis()!.analysis.concerns.length > 0">
+                <h4 class="section-title-secondary">Concerns</h4>
+                <ul class="insight-list-minimal">
+                  <li *ngFor="let concern of conversationAnalysis()!.analysis.concerns" class="insight-negative">
+                    <svg class="insight-icon-minimal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    {{ concern }}
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Timestamp Footer -->
+              <div class="analysis-footer">
+                <span class="footer-text">Generated {{ formatDateTime(conversationAnalysis()!.generated_at) }} • Azure OpenAI GPT-4</span>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Bottom Action Bar (Chat Style) -->
+        <div class="chat-action-bar" *ngIf="conversationActiveTab() === 'analysis'">
+          <button class="action-btn action-btn-secondary"
+                  *ngIf="!conversationAnalysis() && !isLoadingAnalysis()"
+                  (click)="generateAnalysis(selectedConversation()!.conversation_id, false)"
+                  [disabled]="isLoadingAnalysis()">
+            <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+            Generate AI Analysis
+          </button>
+          <button class="action-btn action-btn-secondary"
+                  *ngIf="conversationAnalysis() && !isLoadingAnalysis()"
+                  (click)="generateAnalysis(selectedConversation()!.conversation_id, true)"
+                  [disabled]="isLoadingAnalysis()">
+            <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Regenerate
+          </button>
+          <button class="action-btn action-btn-secondary"
+                  *ngIf="conversationAnalysis()"
+                  (click)="copyAnalysis()">
+            <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+            </svg>
+            Copy
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+<!-- Create Agent Modal -->
+<div *ngIf="showCreateAgentForm()" class="modal-overlay" (click)="toggleCreateAgentForm()">
+  <div class="modal-content modal-create-agent" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Create New Agent</h2>
+      <button class="close-btn" (click)="toggleCreateAgentForm()">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+
+    <div class="modal-body modal-body-scrollable">
+      <div class="create-agent-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Agent Name <span class="required">*</span></label>
+            <input
+              type="text"
+              [(ngModel)]="agentForm.name"
+              class="input"
+              placeholder="e.g., Senior Developer Interviewer">
           </div>
         </div>
 
-        <!-- Analysis Tab Content -->
-        <div *ngIf="conversationActiveTab() === 'analysis'" class="tab-content">
-          <!-- No Analysis State -->
-          <div *ngIf="!conversationAnalysis() && !isLoadingAnalysis()" class="empty-state">
-            <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-            </svg>
-            <h3>No Analysis Available</h3>
-            <p>Generate an AI-powered analysis of this conversation to get insights on candidate performance.</p>
-            <button class="btn btn-primary"
-                    (click)="generateAnalysis(selectedConversation()!.conversation_id, false)"
-                    [disabled]="isLoadingAnalysis()">
-              <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+        <div class="form-row form-row-2">
+          <div class="form-group">
+            <label class="label">Interview Role <span class="required">*</span></label>
+            <input
+              type="text"
+              [(ngModel)]="agentForm.role"
+              class="input"
+              placeholder="e.g., Senior Backend Engineer">
+          </div>
+
+          <div class="form-group">
+            <label class="label">Interview Type <span class="required">*</span></label>
+            <select [(ngModel)]="agentForm.interviewType" class="select">
+              <option *ngFor="let type of interviewTypes" [value]="type.value">{{ type.label }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Duration (minutes) <span class="required">*</span></label>
+            <input
+              type="number"
+              [(ngModel)]="agentForm.maxInterviewMinutes"
+              min="5"
+              max="180"
+              class="input">
+            <small class="hint">Between 5 and 180 minutes</small>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Job Description <span class="required">*</span></label>
+            <textarea
+              [(ngModel)]="agentForm.jobDescription"
+              rows="6"
+              class="textarea"
+              placeholder="Enter the full job description..."></textarea>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">
+              Custom System Prompt
+              <span class="optional">(Optional)</span>
+            </label>
+            <textarea
+              [(ngModel)]="agentForm.systemPrompt"
+              rows="8"
+              class="textarea textarea-mono"
+              placeholder="Leave blank for auto-generated prompt based on interview type&#10;&#10;Or customize to define specific interview style, structure, and questions..."></textarea>
+            <small class="hint">
+              <svg class="hint-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
-              Generate AI Analysis
-            </button>
-          </div>
-
-          <!-- Loading State -->
-          <div *ngIf="isLoadingAnalysis()" class="loading-state">
-            <svg class="spinner-large" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <h3>Analyzing Conversation</h3>
-            <p>Our AI is analyzing the interview transcript. This typically takes 15-30 seconds...</p>
-          </div>
-
-          <!-- Analysis Results -->
-          <div *ngIf="conversationAnalysis() && !isLoadingAnalysis()" class="analysis-results">
-            <!-- Action Bar -->
-            <div class="analysis-action-bar">
-              <button class="btn btn-secondary btn-sm"
-                      (click)="generateAnalysis(selectedConversation()!.conversation_id, true)"
-                      [disabled]="isLoadingAnalysis()">
-                <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                </svg>
-                Regenerate
-              </button>
-              <button class="btn btn-secondary btn-sm" (click)="copyAnalysis()">
-                <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-                </svg>
-                Copy Analysis
-              </button>
-            </div>
-
-            <!-- Subject Knowledge -->
-            <div class="panel">
-              <div class="panel-header">
-                <h3 class="panel-title">Subject Knowledge Assessment</h3>
-              </div>
-              <div class="panel-body">
-                <div class="knowledge-grid">
-                  <div *ngFor="let subject of getObjectKeys(conversationAnalysis()!.analysis.subject_knowledge)"
-                       class="knowledge-card">
-                    <div class="knowledge-card-header">{{ subject }}</div>
-                    <div class="knowledge-card-body">
-                      <span class="badge"
-                            [ngClass]="getBadgeClass(conversationAnalysis()!.analysis.subject_knowledge[subject])">
-                        {{ conversationAnalysis()!.analysis.subject_knowledge[subject] | titlecase }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Reasoning -->
-            <div class="panel">
-              <div class="panel-header">
-                <h3 class="panel-title">Analysis Reasoning</h3>
-              </div>
-              <div class="panel-body">
-                <div class="reasoning-content">{{ conversationAnalysis()!.analysis.reasoning }}</div>
-              </div>
-            </div>
-
-            <!-- Strengths -->
-            <div class="panel" *ngIf="conversationAnalysis()!.analysis.strengths.length > 0">
-              <div class="panel-header">
-                <h3 class="panel-title">Key Strengths</h3>
-              </div>
-              <div class="panel-body">
-                <div class="insight-list">
-                  <div *ngFor="let strength of conversationAnalysis()!.analysis.strengths" class="insight-item insight-positive">
-                    <svg class="insight-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <span class="insight-text">{{ strength }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Concerns -->
-            <div class="panel" *ngIf="conversationAnalysis()!.analysis.concerns.length > 0">
-              <div class="panel-header">
-                <h3 class="panel-title">Areas of Concern</h3>
-              </div>
-              <div class="panel-body">
-                <div class="insight-list">
-                  <div *ngFor="let concern of conversationAnalysis()!.analysis.concerns" class="insight-item insight-negative">
-                    <svg class="insight-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <span class="insight-text">{{ concern }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Footer Info -->
-            <div class="analysis-meta">
-              <span class="meta-item">
-                <svg class="meta-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-                </svg>
-                Generated {{ formatDateTime(conversationAnalysis()!.generated_at) }}
-              </span>
-              <span class="meta-item">
-                <svg class="meta-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                </svg>
-                Azure OpenAI GPT-4
-              </span>
-            </div>
+              Time-tracking instructions are automatically added
+            </small>
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="toggleCreateAgentForm()">
+        Cancel
+      </button>
+      <button
+        (click)="createAgent()"
+        [disabled]="isCreatingAgent()"
+        class="btn btn-primary">
+        <span *ngIf="isCreatingAgent()">
+          <svg class="btn-icon spinner" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Creating...
+        </span>
+        <span *ngIf="!isCreatingAgent()">Create Agent</span>
+      </button>
     </div>
   </div>
 </div>
