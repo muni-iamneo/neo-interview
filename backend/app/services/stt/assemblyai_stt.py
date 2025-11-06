@@ -3,19 +3,22 @@ AssemblyAI Streaming STT service (v3 API) using Universal-Streaming model.
 
 Provides ultra-low latency real-time speech-to-text with turn-based transcripts.
 
-ULTRA-AGGRESSIVE LATENCY OPTIMIZATIONS APPLIED:
+BALANCED LATENCY OPTIMIZATIONS APPLIED:
 - 10ms minimum buffer (was 25ms) - 60% faster audio sending
 - 100ms maximum buffer (was 200ms) - 50% smaller chunks
 - 500ms turn silence timeout (was 700ms) - 29% faster end-of-speech detection
-- 1 word threshold (was 3) - Instant response for short utterances
+- 3 word threshold for tracking (prevents sending every word)
 - 5ms rate limiting (was 10ms) - 50% faster chunk transmission
 - 50ms Begin delay (was 200ms) - 75% faster initialization
 - NumPy silent chunk detection - 10x faster than Python loops
 - 20 RMS threshold (was 30) - Better quiet speech detection
 - 100ms timeout checker (was 500ms) - 5x more precise timeout detection
-- 700ms pending timeout (was 1.0s) - 30% faster fallback
+- 800ms pending timeout - Balanced for responsiveness
 
-Expected performance: 500-800ms STT latency (was 1,000-1,700ms) - 40-68% improvement
+IMPORTANT: Only sends transcripts on end_of_turn (final) or timeout fallback.
+This prevents duplicate/partial transcript issues and reduces LLM load.
+
+Expected performance: 700-1,000ms STT latency (balanced speed + accuracy)
 """
 
 import asyncio
@@ -35,7 +38,11 @@ logger = get_logger(__name__)
 
 
 class AssemblyAISTTService(BaseSTTProvider):
-    """AssemblyAI Streaming STT implementation (v3 API) with ultra-aggressive latency optimizations."""
+    """
+    AssemblyAI Streaming STT implementation (v3 API) with balanced latency optimizations.
+
+    Sends transcripts ONLY on end_of_turn (final) to prevent duplicate/partial issues.
+    """
 
     def __init__(self, on_transcript: Optional[Callable[[str], None]] = None):
         """
@@ -74,13 +81,13 @@ class AssemblyAISTTService(BaseSTTProvider):
         self._last_sent_transcript = ""
         self._has_sent_any_transcript = False
 
-        # ULTRA-AGGRESSIVE: 700ms timeout (was 1.0s)
+        # Timeout for pending transcripts (balanced for responsiveness)
         self._pending_transcript = None
         self._pending_transcript_time = None
-        self._pending_timeout_seconds = 0.7  # Send if no end_of_turn after 700ms
+        self._pending_timeout_seconds = 0.8  # Send if no end_of_turn after 800ms (balanced)
 
-        # ULTRA-AGGRESSIVE: 1 word threshold for instant response (was 3)
-        self._substantial_word_threshold = 1  # Emit at 1 word
+        # Word threshold for tracking substantial transcripts (balanced)
+        self._substantial_word_threshold = 3  # Track at 3+ words (prevents sending every word)
 
     async def initialize(self) -> bool:
         """
@@ -468,6 +475,7 @@ class AssemblyAISTTService(BaseSTTProvider):
                                         self._pending_transcript_time = None
 
                                 if not should_send:
+                                    # PRIMARY: Send on end_of_turn (final transcript for this turn)
                                     if end_of_turn:
                                         if not is_duplicate:
                                             should_send = True
@@ -475,36 +483,14 @@ class AssemblyAISTTService(BaseSTTProvider):
                                             # Clear pending since we got end_of_turn
                                             self._pending_transcript = None
                                             self._pending_transcript_time = None
+                                    # FIRST: Send first transcript immediately for responsiveness
                                     elif is_first_transcript:
-                                        if normalized_text:
+                                        if normalized_text and word_count >= 1:
                                             should_send = True
                                             reason = "first_transcript"
-                                    elif utterance:
-                                        utterance_normalized = utterance.strip()
-                                        utterance_last = normalized_last
-                                        is_utterance_new = utterance_normalized.lower() != utterance_last.lower() if utterance_last else True
 
-                                        # ULTRA-AGGRESSIVE: Emit at 1 word for instant response (was 2+ for short, 3+ for substantial)
-                                        if is_utterance_new and word_count >= 1:
-                                            should_send = True
-                                            reason = "utterance_instant"
-                                            # Clear pending since we're sending
-                                            self._pending_transcript = None
-                                            self._pending_transcript_time = None
-                                        elif is_utterance_new:
-                                            logger.debug(
-                                                "[AssemblyAI STT] Utterance update but no words yet, waiting: '%s'",
-                                                utterance_normalized[:100]
-                                            )
-                                    # Send transcripts at 1+ word threshold
-                                    elif not is_duplicate and word_count >= self._substantial_word_threshold:
-                                        should_send = True
-                                        reason = "transcript_instant"
-                                        # Clear pending since we're sending
-                                        self._pending_transcript = None
-                                        self._pending_transcript_time = None
-
-                                    # Track substantial transcripts (>=threshold words) for timeout fallback
+                                    # Track substantial transcripts (>=3 words) for timeout fallback
+                                    # DON'T send partial transcripts - only track them for timeout
                                     if not should_send and not end_of_turn and word_count >= self._substantial_word_threshold:
                                         # Update if no pending, or if new transcript is different/longer
                                         pending_word_count = len(self._pending_transcript.split()) if self._pending_transcript else 0
