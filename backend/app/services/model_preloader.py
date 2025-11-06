@@ -1,7 +1,7 @@
 """
 Model Preloader Service
 
-Preloads heavy models (Kokoro TTS) during application startup
+Preloads heavy models (Faster-Whisper STT and Kokoro TTS) during application startup
 to avoid delays when users connect to voice sessions.
 """
 
@@ -22,12 +22,14 @@ class ModelPreloaderService:
     This ensures models are downloaded and cached before the first user
     connection, eliminating delays during voice session initialization.
 
-    Note: STT is now handled by AssemblyAI Cloud API (no preloading needed).
-    Only TTS (Kokoro) needs preloading.
+    Preloads:
+    - Faster-Whisper STT model (distil-medium.en)
+    - Kokoro TTS pipeline
     """
 
     def __init__(self):
         self.kokoro_pipeline = None
+        self.whisper_model = None
         self.loaded_providers: Set[str] = set()
 
     async def preload_models(self) -> None:
@@ -98,19 +100,49 @@ class ModelPreloaderService:
         return providers
 
     async def _preload_neo_models(self) -> None:
-        """Preload models for NEO (custom) provider: Kokoro TTS only."""
+        """Preload models for NEO (custom) provider: Faster-Whisper STT and Kokoro TTS."""
         try:
-            logger.info("[Model Preloader] Preloading NEO provider models (Kokoro TTS)...")
+            logger.info("[Model Preloader] Preloading NEO provider models (STT + TTS)...")
 
-            # STT is now AssemblyAI Cloud API (no preloading needed)
-            # Only preload Kokoro TTS
-            await self._preload_kokoro()
+            # Preload both STT and TTS in parallel
+            await asyncio.gather(
+                self._preload_whisper(),
+                self._preload_kokoro(),
+                return_exceptions=True
+            )
 
             self.loaded_providers.add("neo")
             logger.info("[Model Preloader] NEO provider models loaded successfully")
 
         except Exception as e:
             logger.error("[Model Preloader] Failed to preload NEO models: %s", e, exc_info=True)
+
+    async def _preload_whisper(self) -> None:
+        """Preload Faster-Whisper STT model."""
+        try:
+            logger.info("[Model Preloader] Preloading Faster-Whisper STT model...")
+            start_time = asyncio.get_event_loop().time()
+
+            # Import here to avoid loading if not needed
+            from faster_whisper import WhisperModel
+
+            # Load model in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            self.whisper_model = await loop.run_in_executor(
+                None,
+                lambda: WhisperModel("distil-medium.en", device="cpu", compute_type="int8")
+            )
+
+            elapsed = asyncio.get_event_loop().time() - start_time
+            logger.info(
+                "[Model Preloader] Faster-Whisper STT loaded successfully in %.2f seconds",
+                elapsed
+            )
+
+        except Exception as e:
+            logger.error("[Model Preloader] Failed to preload Faster-Whisper: %s", e, exc_info=True)
+            logger.warning("[Model Preloader] Faster-Whisper will be loaded on first use instead")
+            self.whisper_model = None
 
     async def _preload_kokoro(self) -> None:
         """Preload Kokoro TTS pipeline."""
@@ -153,6 +185,15 @@ class ModelPreloaderService:
             logger.error("[Model Preloader] Failed to preload Kokoro: %s", e, exc_info=True)
             logger.warning("[Model Preloader] Kokoro will be loaded on first use instead")
             self.kokoro_pipeline = None
+
+    def get_whisper_model(self) -> Optional[any]:
+        """
+        Get the preloaded Faster-Whisper model instance.
+
+        Returns:
+            The preloaded model or None if not loaded.
+        """
+        return self.whisper_model
 
     def get_kokoro_pipeline(self) -> Optional[any]:
         """

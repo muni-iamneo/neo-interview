@@ -64,19 +64,29 @@ class FasterWhisperSTTService:
         """
         Initialize the Faster-Whisper model.
 
+        Uses preloaded model if available (loaded during app startup),
+        otherwise loads model on-demand.
+
         Returns:
             bool: True if initialization successful.
         """
         try:
-            logger.info("[Faster-Whisper STT] Loading Whisper model (distil-medium)...")
+            # Try to use preloaded model first
+            from app.services.model_preloader import model_preloader
+            preloaded_model = model_preloader.get_whisper_model()
 
-            # Use distil-medium model for better accuracy with moderate latency
-            # Options: tiny (~39M), base (~74M), small (~244M), distil-medium (~400M), medium (~769M), large (~1.5B)
-            # distil-medium: ~400M params, ~97-98% WER accuracy, optimized for speed vs medium
-            self.model = WhisperModel("distil-medium.en", device="cpu", compute_type="int8")
+            if preloaded_model:
+                logger.info("[Faster-Whisper STT] Using preloaded Whisper model (distil-medium)")
+                self.model = preloaded_model
+            else:
+                logger.info("[Faster-Whisper STT] Loading Whisper model (distil-medium) on-demand...")
+                # Use distil-medium model for better accuracy with moderate latency
+                # Options: tiny (~39M), base (~74M), small (~244M), distil-medium (~400M), medium (~769M), large (~1.5B)
+                # distil-medium: ~400M params, ~97-98% WER accuracy, optimized for speed vs medium
+                self.model = WhisperModel("distil-medium.en", device="cpu", compute_type="int8")
 
             self.is_initialized = True
-            logger.info("[Faster-Whisper STT] Model loaded successfully")
+            logger.info("[Faster-Whisper STT] Model initialized successfully")
             return True
 
         except Exception as e:
