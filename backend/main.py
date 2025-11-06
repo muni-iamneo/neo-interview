@@ -26,6 +26,7 @@ from app.core.logging_config import get_logger
 from app.services.cleanup_service import get_cleanup_service
 from app.services.voice_endpoint import integrated_voice_endpoint, get_active_session_count, get_session_status
 from app.services.redis_service import close_redis_client
+from app.services.model_preloader import get_preloader_service
 
 # Import API routers
 from app.api.agents_router import router as agents_router
@@ -37,6 +38,7 @@ from app.api.conversations_router import router as conversations_router
 settings = get_settings()
 logger = get_logger(__name__)
 cleanup_service = get_cleanup_service()
+preloader_service = get_preloader_service()
 
 
 @asynccontextmanager
@@ -45,6 +47,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Application starting up...")
     await cleanup_service.start()
+
+    # Preload heavy models (Kokoro TTS - STT is AssemblyAI Cloud API)
+    await preloader_service.preload_models()
+
     logger.info("Application initialized successfully")
     yield
     # Shutdown

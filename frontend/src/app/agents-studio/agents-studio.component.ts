@@ -67,7 +67,8 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     maxInterviewMinutes: 30,
     jobDescription: '',
     interviewType: 'technical',
-    systemPrompt: ''
+    systemPrompt: '',
+    voiceProvider: 'neo'  // Default to Neo (custom pipeline)
   };
 
   // Interview types available
@@ -80,6 +81,12 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     { value: 'product', label: 'Product Interview' },
     { value: 'panel', label: 'Panel Interview' },
     { value: 'case_study', label: 'Case Study' }
+  ];
+
+  // Voice providers available
+  voiceProviders = [
+    { value: 'neo', label: 'Neo (Custom Pipeline) - Cost-effective, 900-1500ms latency' },
+    { value: 'elevenlabs', label: 'ElevenLabs - Fast response, 200-500ms latency' }
   ];
 
   // Conversations state
@@ -448,7 +455,8 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
         maxInterviewMinutes: 30,
         jobDescription: '',
         interviewType: 'technical',
-        systemPrompt: ''
+        systemPrompt: '',
+        voiceProvider: 'neo'  // Reset to default
       };
     }
   }
@@ -474,7 +482,8 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
       maxInterviewMinutes: this.agentForm.maxInterviewMinutes,
       jobDescription: this.agentForm.jobDescription,
       interviewType: this.agentForm.interviewType,
-      systemPrompt: this.agentForm.systemPrompt || undefined
+      systemPrompt: this.agentForm.systemPrompt || undefined,
+      voiceProvider: this.agentForm.voiceProvider
     };
 
     this.apiService.createAgent(request).subscribe({

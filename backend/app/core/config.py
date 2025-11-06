@@ -62,13 +62,27 @@ class Settings(BaseSettings):
         description="Minimum conversation duration in seconds to include in results"
     )
 
-    # Azure OpenAI Configuration (for interview analysis)
+    # Azure OpenAI Configuration (for interview analysis and real-time LLM)
     AZURE_ENDPOINT: str = Field(default="")
-    OPENAI_API_TYPE: str = Field(default="azure")
     AZURE_OPENAI_API_KEY: str = Field(default="")
     AZURE_OPENAI_MODEL: str = Field(default="gpt-4.1-mini")
     AZURE_OPENAI_DEPLOYMENT: str = Field(default="gpt-4.1-mini-hire")
     OPENAI_API_VERSION: str = Field(default="2025-01-01-preview")
+
+    # Real-time LLM Configuration (for custom voice pipeline)
+    AZURE_OPENAI_MAX_TOKENS: int = Field(default=150)
+    AZURE_OPENAI_TEMPERATURE: float = Field(default=0.7)
+    LLM_CONVERSATIONAL_INSTRUCTIONS: str = Field(
+        default="""
+IMPORTANT CONVERSATIONAL RULES:
+1) Ask exactly ONE question per turn (≤2 sentences, ≤30 words).
+2) WAIT for complete candidate responses - never interrupt mid-thought.
+3) Briefly acknowledge their answer (≤1 clause) before your next question.
+4) Listen carefully and adapt questions based on their responses.
+5) Maintain a natural, conversational pace - avoid rushing.
+Keep your tone professional yet warm.""",
+        description="Conversational instructions appended to all agent system prompts"
+    )
     
     # Audio Configuration
     AUDIO_SAMPLE_RATE: int = Field(default=16000)
@@ -77,20 +91,69 @@ class Settings(BaseSettings):
     AUDIO_FLUSH_INTERVAL: float = Field(default=0.5)
     
     # VAD Configuration
-    VAD_THRESHOLD: float = Field(default=0.0005)
-    VAD_PRE_START_CHUNKS: int = Field(default=25)
-    VAD_AUTO_START_CHUNKS: int = Field(default=60)
-    VAD_MIN_RMS: float = Field(default=0.003)
+    VAD_THRESHOLD: float = Field(
+        default=0.002,
+        description="Voice activity threshold (higher = less sensitive, fewer false positives)"
+    )
+    VAD_PRE_START_CHUNKS: int = Field(
+        default=30,
+        description="Buffer chunks before speech starts"
+    )
+    VAD_AUTO_START_CHUNKS: int = Field(
+        default=80,
+        description="Auto-trigger after N chunks (higher = require longer speech)"
+    )
+    VAD_MIN_RMS: float = Field(
+        default=0.008,
+        description="Minimum RMS energy to filter background noise"
+    )
+
+    # Voice Provider Configuration
+    VOICE_PROVIDER: str = Field(
+        default="elevenlabs",
+        description="Voice provider: 'elevenlabs' or 'custom'"
+    )
+    ENABLE_CUSTOM_PIPELINE: bool = Field(
+        default=False,
+        description="Enable custom STT→LLM→TTS pipeline"
+    )
+
+    # AssemblyAI STT Configuration (Cloud API - Ultra-low latency)
+    ASSEMBLYAI_API_KEY: str = Field(
+        default="",
+        description="AssemblyAI API key for streaming STT (~300ms latency)"
+    )
+    ASSEMBLYAI_WORD_BOOST: list = Field(
+        default_factory=lambda: [],
+        description="List of keywords to boost recognition accuracy"
+    )
+    ASSEMBLYAI_ENABLE_PARTIAL: bool = Field(
+        default=False,
+        description="Enable partial transcripts (for UI updates)"
+    )
+
+    # Kokoro TTS Configuration (CPU-optimized)
+    KOKORO_DEVICE: str = Field(
+        default="cpu",
+        description="Device: cpu or cuda (CPU recommended - 4-8x real-time)"
+    )
+    KOKORO_REPO_ID: str = Field(
+        default="hexgrad/Kokoro-82M",
+        description="HuggingFace repository ID for Kokoro model"
+    )
+    KOKORO_LANG_CODE: str = Field(
+        default="a",
+        description="Language code: 'a'=American English, 'b'=British English, 'e'=Spanish, 'f'=French, 'h'=Hindi, 'i'=Italian, 'p'=Portuguese, 'j'=Japanese, 'z'=Chinese"
+    )
+    KOKORO_VOICE: str = Field(
+        default="af_heart",
+        description="Voice ID: af_heart, af_bella, af_sarah, am_adam, am_michael, etc."
+    )
     
     # Session Management
-    MAX_ACTIVE_SESSIONS: int = Field(default=100)
     SESSION_TIMEOUT_SECONDS: int = Field(default=3600)
     SESSION_CLEANUP_INTERVAL: int = Field(default=300)
-    
-    # WebSocket Configuration
-    WS_HEARTBEAT_INTERVAL: int = Field(default=30)
-    WS_MESSAGE_MAX_SIZE: int = Field(default=10 * 1024 * 1024)
-    
+
     # JWT Configuration
     JWT_DEFAULT_TTL_SECONDS: int = Field(default=3600)
     JWT_MAX_TTL_SECONDS: int = Field(default=86400)
@@ -106,10 +169,7 @@ class Settings(BaseSettings):
     
     # Logging Configuration
     LOG_LEVEL: str = Field(default="INFO")
-    LOG_FORMAT: str = Field(
-        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    
+
     @field_validator("LOG_LEVEL")
     @classmethod
     def validate_log_level(cls, v):
