@@ -147,7 +147,7 @@ class Settings(BaseSettings):
         description="Language code: 'a'=American English, 'b'=British English, 'e'=Spanish, 'f'=French, 'h'=Hindi, 'i'=Italian, 'p'=Portuguese, 'j'=Japanese, 'z'=Chinese"
     )
     KOKORO_VOICE: str = Field(
-        default="af_heart",
+        default="af_bella",
         description="Voice ID: af_heart, af_bella, af_sarah, am_adam, am_michael, etc."
     )
     
