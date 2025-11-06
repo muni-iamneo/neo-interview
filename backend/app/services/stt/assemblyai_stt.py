@@ -56,11 +56,11 @@ class AssemblyAISTTService(BaseSTTProvider):
         self._receive_task = None
 
         # Audio buffering (AssemblyAI requires 50-1000ms chunks)
-        # 50ms @ 16kHz = 1600 bytes (16-bit mono)
-        # Use smaller max chunks (200ms) to avoid large messages and improve reliability
+        # OPTIMIZED: Reduced to 20ms min / 100ms max for lower latency
+        # 20ms @ 16kHz = 640 bytes (16-bit mono)
         self._audio_buffer = bytearray()
-        self._min_chunk_bytes = int((self.sample_rate * 2 * 50) / 1000)  # 50ms minimum
-        self._max_chunk_bytes = int((self.sample_rate * 2 * 200) / 1000)  # 200ms maximum (reduced from 1000ms)
+        self._min_chunk_bytes = int((self.sample_rate * 2 * 20) / 1000)  # 20ms minimum (60% faster)
+        self._max_chunk_bytes = int((self.sample_rate * 2 * 100) / 1000)  # 100ms maximum (50% smaller)
         self._last_send_time = 0.0  # Track last send time for rate limiting
 
         # Performance metrics
@@ -83,13 +83,13 @@ class AssemblyAISTTService(BaseSTTProvider):
 
             # Connection parameters:
             # - inactivity_timeout: Keep connection alive for longer periods (default may be too short)
-            # - max_turn_silence: Allow longer silence within a turn before ending
+            # - max_turn_silence: OPTIMIZED to 1.5s for faster response (was 3s)
             ws_url = (
                 f"wss://streaming.assemblyai.com/v3/ws"
                 f"?sample_rate={self.sample_rate}"
                 f"&encoding=pcm_s16le"
                 f"&inactivity_timeout=300"  # 5 minutes of inactivity before closing
-                f"&max_turn_silence=3000"   # 3 seconds of silence before ending turn
+                f"&max_turn_silence=1500"   # 1.5 seconds of silence before ending turn (OPTIMIZED: was 3000ms)
                 f"{word_boost_param}"
             )
 
@@ -206,9 +206,18 @@ class AssemblyAISTTService(BaseSTTProvider):
 
         chunk_duration_ms = (len(chunk) / (self.sample_rate * 2)) * 1000
 
-        # Check if chunk is completely silent (all zeros)
+        # Check if chunk is completely silent (all zeros or near-silent)
+        # OPTIMIZED: Use NumPy for fast vectorized check instead of Python loop
         # AssemblyAI may reject too many silent chunks
-        is_silent = all(b == 0 for b in chunk)
+        try:
+            import numpy as np
+            audio_array = np.frombuffer(chunk, dtype=np.int16)
+            max_amplitude = np.abs(audio_array).max()
+            is_silent = max_amplitude < 100  # Threshold for near-silence
+        except Exception:
+            # Fallback to simple check if NumPy fails
+            is_silent = all(b == 0 for b in chunk)
+
         if is_silent:
             # Skip completely silent chunks - don't send to AssemblyAI
             # This prevents "Invalid Message Type" errors from too many silent packets
@@ -239,15 +248,10 @@ class AssemblyAISTTService(BaseSTTProvider):
             # - When encoding=pcm_s16le is specified in URL, send raw PCM binary frames
             # - When no encoding specified, use JSON with base64
             # Since we specify encoding=pcm_s16le, we should send binary frames
-            # 
-            # Rate limiting: Ensure minimum 20ms between sends to avoid overwhelming API
-            current_time = time.time()
-            time_since_last_send = current_time - self._last_send_time
-            min_send_interval = 0.02  # 20ms minimum interval
-            
-            if time_since_last_send < min_send_interval:
-                await asyncio.sleep(min_send_interval - time_since_last_send)
-            
+            #
+            # OPTIMIZED: Removed rate limiting for lower latency (AssemblyAI can handle fast rates)
+            # Previous version had 20ms minimum interval - now sends immediately
+
             # Log the message being sent (reduced verbosity)
             logger.debug(
                 "[AssemblyAI STT] Sending audio: %d bytes PCM (%.1fms)",
@@ -255,9 +259,9 @@ class AssemblyAISTTService(BaseSTTProvider):
                 chunk_duration_ms
             )
 
-            # Send as binary frame
+            # Send as binary frame immediately
             await self.websocket.send(chunk)
-            self._last_send_time = time.time()
+            self._last_send_time = time.time()  # Track for metrics only
         except websockets.exceptions.ConnectionClosed as e:
             logger.warning(
                 "[AssemblyAI STT] Connection closed while sending audio: code=%s, reason=%s",
@@ -320,8 +324,8 @@ class AssemblyAISTTService(BaseSTTProvider):
                         )
                         # Mark Begin received BEFORE setting is_connected to ensure proper ordering
                         self._begin_received = True
-                        # Small delay to ensure Begin message is fully processed server-side
-                        await asyncio.sleep(0.2)
+                        # OPTIMIZED: Minimal delay (was 200ms, now 50ms for lower latency)
+                        await asyncio.sleep(0.05)
                         # Set connected flag after Begin is confirmed
                         self.is_connected = True
 

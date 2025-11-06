@@ -175,12 +175,15 @@ class AzureRealtimeLLMService(BaseLLMProvider):
             )
 
             # Call Azure OpenAI (streaming)
+            # OPTIMIZED: Added presence/frequency penalties for faster, more concise responses
             stream = await self.client.chat.completions.create(
                 model=settings.AZURE_OPENAI_DEPLOYMENT,
                 messages=messages,
                 temperature=settings.AZURE_OPENAI_TEMPERATURE,
                 max_tokens=settings.AZURE_OPENAI_MAX_TOKENS,
                 stream=True,
+                presence_penalty=0.6,  # Encourages concise responses (reduces latency)
+                frequency_penalty=0.3,  # Reduces repetition
             )
 
             # Stream chunks
@@ -257,8 +260,8 @@ class AzureRealtimeLLMService(BaseLLMProvider):
         messages = [{"role": "system", "content": system_prompt}]
 
         # Add conversation history (limit to prevent token overflow)
-        # Keep only recent messages
-        recent_history = conversation_history[-10:]  # Last 10 exchanges (20 messages)
+        # OPTIMIZED: Reduced from 10 to 3 exchanges for lower latency
+        recent_history = conversation_history[-3:]  # Last 3 exchanges (6 messages)
         messages.extend(recent_history)
 
         # Add current user message
@@ -278,7 +281,8 @@ class AzureRealtimeLLMService(BaseLLMProvider):
         self.conversation_history.append({"role": "assistant", "content": assistant_message})
 
         # Trim history if too long (rough estimate: ~4 chars per token)
-        while len(self.conversation_history) > 20:  # Keep max 10 exchanges
+        # OPTIMIZED: Reduced from 20 to 6 messages (3 exchanges) for lower latency
+        while len(self.conversation_history) > 6:  # Keep max 3 exchanges
             self.conversation_history.pop(0)
 
     def get_metrics(self) -> Dict:

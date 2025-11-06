@@ -73,15 +73,8 @@ class Settings(BaseSettings):
     AZURE_OPENAI_MAX_TOKENS: int = Field(default=150)
     AZURE_OPENAI_TEMPERATURE: float = Field(default=0.7)
     LLM_CONVERSATIONAL_INSTRUCTIONS: str = Field(
-        default="""
-IMPORTANT CONVERSATIONAL RULES:
-1) Ask exactly ONE question per turn (≤2 sentences, ≤30 words).
-2) WAIT for complete candidate responses - never interrupt mid-thought.
-3) Briefly acknowledge their answer (≤1 clause) before your next question.
-4) Listen carefully and adapt questions based on their responses.
-5) Maintain a natural, conversational pace - avoid rushing.
-Keep your tone professional yet warm.""",
-        description="Conversational instructions appended to all agent system prompts"
+        default="""Rules: 1 question/turn (≤30 words), wait for full response, acknowledge briefly, adapt naturally. Professional yet warm.""",
+        description="Conversational instructions appended to all agent system prompts (OPTIMIZED: Shortened for lower latency)"
     )
     
     # Audio Configuration
