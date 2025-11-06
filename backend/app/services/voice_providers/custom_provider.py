@@ -74,7 +74,7 @@ class CustomVoiceProvider(BaseVoiceProvider):
             logger.info("[Custom Provider] Loading STT...")
             self.stt = get_stt_service(on_transcript=self._on_stt_transcript)
             if not await self.stt.initialize():
-                logger.error("[Custom Provider] STT initialization failed")
+                logger.error("[Custom Provider] STT initialization failed (check logs for details)")
                 return False
 
             # Initialize LLM

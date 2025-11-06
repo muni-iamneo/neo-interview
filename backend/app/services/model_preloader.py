@@ -140,8 +140,8 @@ class ModelPreloaderService:
             )
 
         except Exception as e:
-            logger.error("[Model Preloader] Failed to preload Faster-Whisper: %s", e, exc_info=True)
-            logger.warning("[Model Preloader] Faster-Whisper will be loaded on first use instead")
+            logger.error("[Model Preloader] Failed to preload Faster-Whisper STT: %s", e, exc_info=True)
+            logger.warning("[Model Preloader] Faster-Whisper will be loaded on-demand when user connects")
             self.whisper_model = None
 
     async def _preload_kokoro(self) -> None:

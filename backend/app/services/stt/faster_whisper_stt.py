@@ -90,7 +90,7 @@ class FasterWhisperSTTService:
             return True
 
         except Exception as e:
-            logger.error(f"[Faster-Whisper STT] Initialization failed: {e}")
+            logger.error(f"[Faster-Whisper STT] Initialization failed: {e}", exc_info=True)
             return False
 
     async def process_audio(self, audio_chunk: bytes) -> None:
