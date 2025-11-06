@@ -195,3 +195,6 @@ def get_settings() -> Settings:
         _settings = Settings()
     return _settings
 
+
+# Create the singleton instance for direct import
+settings = get_settings()

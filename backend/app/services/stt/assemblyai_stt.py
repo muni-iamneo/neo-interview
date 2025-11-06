@@ -24,7 +24,6 @@ Expected performance: 700-1,000ms STT latency (balanced speed + accuracy)
 import asyncio
 import time
 import json
-import audioop
 from typing import Optional, Callable
 import websockets
 import numpy as np
@@ -175,21 +174,9 @@ class AssemblyAISTTService(BaseSTTProvider):
                 logger.debug("[AssemblyAI STT] Received empty audio chunk, skipping")
                 return None
 
-            # ULTRA-AGGRESSIVE: Pre-filter silence with lower threshold (20, was 30)
-            try:
-                rms = audioop.rms(pcm16, 2)  # 2 bytes per sample (16-bit PCM)
-                if rms <= 20:  # ULTRA-AGGRESSIVE: More sensitive to quiet speech
-                    # Silent chunk, skip it
-                    self._audio_chunks_skipped_silent += 1
-                    if self._audio_chunks_skipped_silent % 50 == 0:
-                        logger.debug(
-                            "[AssemblyAI STT] Pre-filtered %d silent chunks (rms <= 20)",
-                            self._audio_chunks_skipped_silent
-                        )
-                    return None
-            except Exception as e:
-                # If audioop fails, continue anyway (shouldn't happen with valid PCM16)
-                logger.debug("[AssemblyAI STT] Audio RMS check failed: %s", e)
+            # NOTE: Removed aggressive RMS silence filter (was causing all speech to be filtered out)
+            # AssemblyAI's API handles silence detection via inactivity_timeout and max_turn_silence parameters
+            # For 16-bit PCM: typical speech has RMS 100-500+, so RMS <= 20 was filtering out all valid audio
 
             self._audio_buffer.extend(pcm16)
             self._audio_chunks_received += 1

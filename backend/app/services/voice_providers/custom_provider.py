@@ -23,19 +23,21 @@ logger = get_logger(__name__)
 
 class CustomVoiceProvider(BaseVoiceProvider):
     """
-    Custom voice pipeline provider.
+    Custom voice pipeline provider (NEO).
 
     Implements the complete voice AI pipeline:
-    1. User audio (PCM16) → Faster-Whisper STT → Text
+    1. User audio (PCM16) → Faster-Whisper STT (local, 200-400ms latency) → Text
     2. Text → Azure OpenAI LLM → Response text (streaming)
-    3. Response text → Kokoro TTS → Agent audio (PCM16)
+    3. Response text → Kokoro TTS (CPU-optimized) → Agent audio (PCM16)
+
+    This is the primary voice provider with ultra-low latency for conversational AI.
     """
 
     def __init__(self, callbacks: VoiceProviderCallback):
         super().__init__(callbacks)
 
         # Pipeline components
-        self.stt: Optional[WhisperSTTService] = None
+        self.stt = None  # Will be initialized based on config (Faster-Whisper by default)
         self.llm: Optional[AzureRealtimeLLMService] = None
         self.tts: Optional[KokoroTTSService] = None
 
@@ -68,12 +70,11 @@ class CustomVoiceProvider(BaseVoiceProvider):
             logger.info("[Custom Provider] Initializing pipeline for agent: %s", agent_id)
             self.agent_id = agent_id
 
-            # Initialize STT (AssemblyAI - Streaming or Standard based on config)
-            api_type = "Standard (HTTP)" if settings.ASSEMBLYAI_USE_STANDARD_API else "Streaming (WebSocket)"
-            logger.info(f"[Custom Provider] Loading STT (AssemblyAI {api_type})...")
+            # Initialize STT (Faster-Whisper by default, or AssemblyAI if configured)
+            logger.info("[Custom Provider] Loading STT...")
             self.stt = get_stt_service(on_transcript=self._on_stt_transcript)
             if not await self.stt.initialize():
-                logger.error("[Custom Provider] AssemblyAI STT initialization failed")
+                logger.error("[Custom Provider] STT initialization failed")
                 return False
 
             # Initialize LLM
