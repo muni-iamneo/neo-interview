@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 from app.core.config import get_settings
 from app.core.logging_config import get_logger
 from app.services.voice_providers.base import BaseVoiceProvider, VoiceProviderCallback
-from app.services.stt.assemblyai_stt import AssemblyAISTTService
+from app.services.stt import get_stt_service
 from app.services.llm.azure_realtime_llm import AzureRealtimeLLMService
 from app.services.tts.kokoro_tts import KokoroTTSService
 from app.services.agents_service import DEFAULT_GENERIC_SYSTEM_PROMPT
@@ -68,9 +68,10 @@ class CustomVoiceProvider(BaseVoiceProvider):
             logger.info("[Custom Provider] Initializing pipeline for agent: %s", agent_id)
             self.agent_id = agent_id
 
-            # Initialize STT (AssemblyAI Streaming)
-            logger.info("[Custom Provider] Loading STT (AssemblyAI Streaming)...")
-            self.stt = AssemblyAISTTService(on_transcript=self._on_stt_transcript)
+            # Initialize STT (AssemblyAI - Streaming or Standard based on config)
+            api_type = "Standard (HTTP)" if settings.ASSEMBLYAI_USE_STANDARD_API else "Streaming (WebSocket)"
+            logger.info(f"[Custom Provider] Loading STT (AssemblyAI {api_type})...")
+            self.stt = get_stt_service(on_transcript=self._on_stt_transcript)
             if not await self.stt.initialize():
                 logger.error("[Custom Provider] AssemblyAI STT initialization failed")
                 return False

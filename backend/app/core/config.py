@@ -124,6 +124,14 @@ class Settings(BaseSettings):
         default=False,
         description="Enable partial transcripts (for UI updates)"
     )
+    ASSEMBLYAI_USE_STANDARD_API: bool = Field(
+        default=False,
+        description="Use Standard API instead of Streaming (WARNING: +1-2s latency, for testing only)"
+    )
+    ASSEMBLYAI_LANGUAGE_CODE: str = Field(
+        default="en",
+        description="Language code for transcription (e.g., 'en', 'es', 'fr')"
+    )
 
     # Kokoro TTS Configuration (CPU-optimized)
     KOKORO_DEVICE: str = Field(
