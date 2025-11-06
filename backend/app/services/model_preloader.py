@@ -227,3 +227,7 @@ def get_preloader_service() -> ModelPreloaderService:
     if _preloader_service is None:
         _preloader_service = ModelPreloaderService()
     return _preloader_service
+
+
+# Create the singleton instance for direct import
+model_preloader = get_preloader_service()
