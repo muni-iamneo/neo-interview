@@ -291,17 +291,6 @@ class LinksService:
             return None
 
 
-
-
-
-
-
-
-
-
-
-
-
 # Global service instance
 _links_service: Optional[LinksService] = None
 

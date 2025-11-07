@@ -114,6 +114,9 @@
             <div class="agent-meta">
               <span class="badge badge-type">{{ agent.interviewType.replace('_', ' ') }}</span>
               <span class="badge badge-duration">{{ agent.maxInterviewMinutes }} min</span>
+              <span class="badge badge-provider" [title]="(agent.voiceProvider || 'neo') === 'neo' ? 'Neo (Custom Pipeline)' : 'ElevenLabs'">
+                {{ (agent.voiceProvider || 'neo') === 'neo' ? 'Neo' : 'ElevenLabs' }}
+              </span>
             </div>
           </div>
         </div>
@@ -220,6 +223,12 @@
               <div class="detail-item">
                 <span class="detail-label">Default Duration</span>
                 <span class="detail-value">{{ selectedAgent()!.maxInterviewMinutes }} minutes</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Voice Provider</span>
+                <span class="badge badge-type-large">
+                  {{ (selectedAgent()!.voiceProvider || 'neo') === 'neo' ? 'Neo (Custom Pipeline)' : 'ElevenLabs' }}
+                </span>
               </div>
             </div>
 
@@ -941,7 +950,7 @@
           </div>
         </div>
 
-        <div class="form-row">
+        <div class="form-row form-row-2">
           <div class="form-group">
             <label class="label">Duration (minutes) <span class="required">*</span></label>
             <input
@@ -951,6 +960,14 @@
               max="180"
               class="input">
             <small class="hint">Between 5 and 180 minutes</small>
+          </div>
+
+          <div class="form-group">
+            <label class="label">Voice Provider <span class="required">*</span></label>
+            <select [(ngModel)]="agentForm.voiceProvider" class="select">
+              <option *ngFor="let provider of voiceProviders" [value]="provider.value">{{ provider.label }}</option>
+            </select>
+            <small class="hint">Neo is cost-effective; ElevenLabs offers faster response</small>
           </div>
         </div>
 

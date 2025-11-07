@@ -22,6 +22,7 @@ class CreateAgentRequest(BaseModel):
     jobDescription: str = Field(..., min_length=1, max_length=5000, description="Job description for the position being interviewed for")
     interviewType: str = Field(default="technical", description="Type of interview: technical, system_design, behavioral, managerial, hr, product, panel, case_study")
     systemPrompt: Optional[str] = Field(None, max_length=10000, description="Optional custom system prompt for the agent")
+    voiceProvider: str = Field(default="neo", description="Voice provider: 'neo' (custom pipeline) or 'elevenlabs'")
 
 
 class UpdateAgentRequest(BaseModel):
@@ -32,6 +33,7 @@ class UpdateAgentRequest(BaseModel):
     jobDescription: Optional[str] = Field(None, min_length=1, max_length=5000, description="Job description for the position")
     interviewType: Optional[str] = Field(None, description="Type of interview: technical, system_design, behavioral, managerial, hr, product, panel, case_study")
     systemPrompt: Optional[str] = Field(None, max_length=10000, description="Optional custom system prompt for the agent")
+    voiceProvider: Optional[str] = Field(None, description="Voice provider: 'neo' (custom pipeline) or 'elevenlabs'")
 
 
 class AgentResponse(BaseModel):
@@ -44,6 +46,7 @@ class AgentResponse(BaseModel):
     interviewType: str
     systemPrompt: Optional[str]
     elevenAgentId: Optional[str]
+    voiceProvider: str
     createdAt: str
     updatedAt: str
 
@@ -62,6 +65,7 @@ async def create_agent(request: CreateAgentRequest):
             job_description=request.jobDescription,
             interview_type=request.interviewType,
             system_prompt=request.systemPrompt,
+            voice_provider=request.voiceProvider,
         )
         
         return AgentResponse(**agent.to_dict())
@@ -119,6 +123,7 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
             job_description=request.jobDescription,
             interview_type=request.interviewType,
             system_prompt=request.systemPrompt,
+            voice_provider=request.voiceProvider,
         )
         
         return AgentResponse(**agent.to_dict())

@@ -34,6 +34,7 @@ export interface CreateAgentRequest {
   jobDescription: string;
   interviewType?: string;
   systemPrompt?: string;
+  voiceProvider?: string;
 }
 
 export interface UpdateAgentRequest {
@@ -43,6 +44,7 @@ export interface UpdateAgentRequest {
   jobDescription?: string;
   interviewType?: string;
   systemPrompt?: string;
+  voiceProvider?: string;
 }
 
 export interface AgentResponse {
@@ -54,6 +56,7 @@ export interface AgentResponse {
   interviewType: string;
   systemPrompt?: string;
   elevenAgentId?: string;
+  voiceProvider?: string;
   createdAt: string;
   updatedAt: string;
 }

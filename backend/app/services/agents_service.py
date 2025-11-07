@@ -20,10 +20,18 @@ from .redis_service import RedisStorage
 settings = get_settings()
 logger = get_logger(__name__)
 
+# Default generic system prompt used when no agent data is available
+# Note: Conversational instructions are appended separately in custom_provider.py
+DEFAULT_GENERIC_SYSTEM_PROMPT = (
+    "You are an AI interviewer conducting a professional job interview. "
+    "Ask relevant questions, listen carefully, and engage naturally. "
+    "Keep responses concise and conversational."
+)
+
 
 class AgentData:
     """Agent data model"""
-    
+
     def __init__(
         self,
         name: str,
@@ -34,6 +42,7 @@ class AgentData:
         system_prompt: Optional[str] = None,
         eleven_agent_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        voice_provider: str = "neo",  # Default to "neo" (custom pipeline)
     ):
         self.id = agent_id or str(uuid.uuid4())
         self.name = name
@@ -43,6 +52,7 @@ class AgentData:
         self.interview_type = interview_type
         self.system_prompt = system_prompt
         self.eleven_agent_id = eleven_agent_id
+        self.voice_provider = voice_provider  # "neo" or "elevenlabs"
         self.created_at = datetime.utcnow().isoformat()
         self.updated_at = datetime.utcnow().isoformat()
     
@@ -57,6 +67,7 @@ class AgentData:
             "interviewType": self.interview_type,
             "systemPrompt": self.system_prompt,
             "elevenAgentId": self.eleven_agent_id,
+            "voiceProvider": self.voice_provider,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -73,6 +84,7 @@ class AgentData:
             system_prompt=data.get("systemPrompt"),
             eleven_agent_id=data.get("elevenAgentId"),
             agent_id=data.get("id"),
+            voice_provider=data.get("voiceProvider", "neo"),  # Default to "neo" for backward compatibility
         )
         agent.created_at = data.get("createdAt", agent.created_at)
         agent.updated_at = data.get("updatedAt", agent.updated_at)
@@ -267,6 +279,7 @@ class AgentsService:
         job_description: str,
         interview_type: str = "technical",
         system_prompt: Optional[str] = None,
+        voice_provider: str = "neo",
     ) -> AgentData:
         """Create a new agent in ElevenLabs and persist locally"""
         
@@ -289,64 +302,75 @@ class AgentsService:
         valid_types = ["technical", "system_design", "behavioral", "managerial", "hr", "product", "panel", "case_study"]
         if interview_type not in valid_types:
             raise ValueError(f"Interview type must be one of: {', '.join(valid_types)}")
+
+        valid_providers = ["neo", "elevenlabs"]
+        if voice_provider not in valid_providers:
+            raise ValueError(f"Voice provider must be one of: {', '.join(valid_providers)}")
+
+        # Only validate ElevenLabs API key if using elevenlabs provider
+        if voice_provider == "elevenlabs" and not self.api_key:
+            raise ValueError("ELEVENLABS_API_KEY not configured for elevenlabs provider")
         
-        if not self.api_key:
-            raise ValueError("ELEVENLABS_API_KEY not configured")
-        
-        logger.info("Creating agent: name=%s role=%s type=%s minutes=%d custom_prompt=%s", 
-                   name, role, interview_type, max_interview_minutes, bool(system_prompt))
-        
+        logger.info("Creating agent: name=%s role=%s type=%s minutes=%d provider=%s custom_prompt=%s",
+                   name, role, interview_type, max_interview_minutes, voice_provider, bool(system_prompt))
+
         try:
             # Build prompt and first message
             final_prompt = self._build_agent_prompt(role, job_description, max_interview_minutes, interview_type, system_prompt)
             first_message = self._build_first_message(role, max_interview_minutes)
-            
-            # Create agent via ElevenLabs API
-            payload = {
-                "name": name,
-                "conversation_config": {
-                    "agent": {
-                        "prompt": {
-                            "prompt": final_prompt,
-                            "first_message": first_message,
-                            "tools": [
-                                {
-                                    "type": "system",
-                                    "name": "end_call",
-                                    "description": f"End the call when the interview duration of {max_interview_minutes} minutes has elapsed or when the candidate requests to end the interview."
-                                }
-                            ]
+
+            eleven_agent_id = None
+
+            # Create agent via ElevenLabs API only if using elevenlabs provider
+            if voice_provider == "elevenlabs":
+                payload = {
+                    "name": name,
+                    "conversation_config": {
+                        "agent": {
+                            "prompt": {
+                                "prompt": final_prompt,
+                                "first_message": first_message,
+                                "tools": [
+                                    {
+                                        "type": "system",
+                                        "name": "end_call",
+                                        "description": f"End the call when the interview duration of {max_interview_minutes} minutes has elapsed or when the candidate requests to end the interview."
+                                    }
+                                ]
+                            }
                         }
                     }
                 }
-            }
-            
-            logger.debug("Creating ElevenLabs agent with payload: %s", json.dumps(payload, indent=2)[:500])
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/convai/agents/create",
-                    headers={
-                        "xi-api-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json=payload
-                )
-                
-                if response.status_code == 429:
-                    logger.warning("Rate limit hit when creating agent")
-                    raise ValueError("Rate limit exceeded. Please try again later.")
-                
-                response.raise_for_status()
-                result = response.json()
-                
-                eleven_agent_id = result.get("agent_id")
-                if not eleven_agent_id:
-                    logger.error("No agent_id in ElevenLabs response: %s", result)
-                    raise ValueError("Failed to get agent ID from ElevenLabs")
-                
-                logger.info("ElevenLabs agent created: %s", eleven_agent_id)
-            
+
+                logger.debug("Creating ElevenLabs agent with payload: %s", json.dumps(payload, indent=2)[:500])
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/convai/agents/create",
+                        headers={
+                            "xi-api-key": self.api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json=payload
+                    )
+
+                    if response.status_code == 429:
+                        logger.warning("Rate limit hit when creating agent")
+                        raise ValueError("Rate limit exceeded. Please try again later.")
+
+                    response.raise_for_status()
+                    result = response.json()
+
+                    eleven_agent_id = result.get("agent_id")
+                    if not eleven_agent_id:
+                        logger.error("No agent_id in ElevenLabs response: %s", result)
+                        raise ValueError("Failed to get agent ID from ElevenLabs")
+
+                    logger.info("ElevenLabs agent created: %s", eleven_agent_id)
+            else:
+                # For "neo" provider, no ElevenLabs API call needed
+                logger.info("Using Neo (custom) voice provider - skipping ElevenLabs agent creation")
+
             # Create local agent record
             agent = AgentData(
                 name=name,
@@ -356,6 +380,7 @@ class AgentsService:
                 interview_type=interview_type,
                 system_prompt=system_prompt,
                 eleven_agent_id=eleven_agent_id,
+                voice_provider=voice_provider,
             )
             
             # Persist to Redis
@@ -380,6 +405,7 @@ class AgentsService:
         job_description: Optional[str] = None,
         interview_type: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        voice_provider: Optional[str] = None,
     ) -> AgentData:
         """Update an existing agent"""
         
@@ -423,12 +449,19 @@ class AgentsService:
             if interview_type not in valid_types:
                 raise ValueError(f"Interview type must be one of: {', '.join(valid_types)}")
             agent.interview_type = interview_type
+
+        if voice_provider is not None:
+            valid_providers = ["neo", "elevenlabs"]
+            if voice_provider not in valid_providers:
+                raise ValueError(f"Voice provider must be one of: {', '.join(valid_providers)}")
+            agent.voice_provider = voice_provider
+
+        # Only validate ElevenLabs API key if using elevenlabs provider
+        if agent.voice_provider == "elevenlabs" and not self.api_key:
+            raise ValueError("ELEVENLABS_API_KEY not configured for elevenlabs provider")
         
-        if not self.api_key:
-            raise ValueError("ELEVENLABS_API_KEY not configured")
-        
-        logger.info("Updating agent: id=%s", agent_id)
-        
+        logger.info("Updating agent: id=%s provider=%s", agent_id, agent.voice_provider)
+
         try:
             # Build updated prompt
             final_prompt = self._build_agent_prompt(
@@ -439,44 +472,47 @@ class AgentsService:
                 agent.system_prompt
             )
             first_message = self._build_first_message(agent.role, agent.max_interview_minutes)
-            
-            # Update via ElevenLabs API
-            payload = {
-                "name": agent.name,
-                "conversation_config": {
-                    "agent": {
-                        "prompt": {
-                            "prompt": final_prompt,
-                            "first_message": first_message,
-                            "tools": [
-                                {
-                                    "type": "system",
-                                    "name": "end_call",
-                                    "description": f"End the call when the interview duration of {agent.max_interview_minutes} minutes has elapsed or when the candidate requests to end the interview."
-                                }
-                            ]
+
+            # Update via ElevenLabs API only if using elevenlabs provider
+            if agent.voice_provider == "elevenlabs" and agent.eleven_agent_id:
+                payload = {
+                    "name": agent.name,
+                    "conversation_config": {
+                        "agent": {
+                            "prompt": {
+                                "prompt": final_prompt,
+                                "first_message": first_message,
+                                "tools": [
+                                    {
+                                        "type": "system",
+                                        "name": "end_call",
+                                        "description": f"End the call when the interview duration of {agent.max_interview_minutes} minutes has elapsed or when the candidate requests to end the interview."
+                                    }
+                                ]
+                            }
                         }
                     }
                 }
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.patch(
-                    f"{self.base_url}/convai/agents/{agent.eleven_agent_id}",
-                    headers={
-                        "xi-api-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json=payload
-                )
-                
-                if response.status_code == 429:
-                    logger.warning("Rate limit hit when updating agent")
-                    raise ValueError("Rate limit exceeded. Please try again later.")
-                
-                response.raise_for_status()
-                logger.info("ElevenLabs agent updated: %s", agent.eleven_agent_id)
-            
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.patch(
+                        f"{self.base_url}/convai/agents/{agent.eleven_agent_id}",
+                        headers={
+                            "xi-api-key": self.api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json=payload
+                    )
+
+                    if response.status_code == 429:
+                        logger.warning("Rate limit hit when updating agent")
+                        raise ValueError("Rate limit exceeded. Please try again later.")
+
+                    response.raise_for_status()
+                    logger.info("ElevenLabs agent updated: %s", agent.eleven_agent_id)
+            else:
+                logger.info("Using Neo (custom) provider - skipping ElevenLabs update")
+
             # Update timestamp
             agent.updated_at = datetime.utcnow().isoformat()
             
