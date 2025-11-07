@@ -73,28 +73,28 @@ class ModelPreloaderService:
         """
         Determine which voice providers should have models preloaded.
 
+        Voice provider selection is now controlled by Redis agent data, not .env settings.
+        This method preloads models based on available API credentials.
+
         Returns:
             Set of provider names to preload ("neo", "elevenlabs", etc.)
         """
         providers = set()
 
-        # Check global settings
-        if settings.VOICE_PROVIDER.lower() == "neo" or settings.ENABLE_CUSTOM_PIPELINE:
+        # Preload NEO models if Azure LLM is configured (required for custom pipeline)
+        if settings.AZURE_OPENAI_API_KEY:
+            logger.info("[Model Preloader] Preloading NEO models (Azure LLM configured)")
             providers.add("neo")
 
-        if settings.VOICE_PROVIDER.lower() == "elevenlabs":
-            providers.add("elevenlabs")
-
-        # TODO: Optionally check all configured agents to see which providers they use
-        # This would require loading agent configs, which we can add if needed
-        # For now, we'll preload based on: if EITHER provider could be used, preload it
-
-        # If we have ElevenLabs config, assume it might be used
+        # Preload ElevenLabs models if API key is configured
         if settings.ELEVENLABS_API_KEY:
+            logger.info("[Model Preloader] Preloading ElevenLabs models (API key configured)")
             providers.add("elevenlabs")
 
-        # If we have custom pipeline enabled or Azure config, assume NEO might be used
-        if settings.ENABLE_CUSTOM_PIPELINE or settings.AZURE_OPENAI_API_KEY:
+        # NOTE: Agents in Redis determine which provider to use at runtime.
+        # If no providers are configured with credentials, default to "neo" (local models)
+        if not providers:
+            logger.warning("[Model Preloader] No API credentials configured, defaulting to NEO")
             providers.add("neo")
 
         return providers

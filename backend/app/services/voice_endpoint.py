@@ -41,7 +41,6 @@ class IntegratedVoiceSession:
         self.websocket = websocket
         self.bridge: Optional[JitsiElevenLabsBridge] = None
         self.provider: Optional[BaseVoiceProvider] = None
-        self.use_new_provider = settings.ENABLE_CUSTOM_PIPELINE
         self.is_active = False
         self.audio_buffer = bytearray()
         self.chunk_size = settings.AUDIO_CHUNK_SIZE
@@ -70,22 +69,25 @@ class IntegratedVoiceSession:
                 logger.info("[Session %s] Using per-session agent: %s max_minutes=%s",
                            self.session_id, agent_id_for_session, self._max_interview_minutes)
 
-            # Get agent configuration to determine voice provider
+            # Get agent configuration to determine voice provider (from Redis only)
             if agent_id_for_session:
                 agents_service = get_agents_service()
                 agent_data = await agents_service.get_agent(agent_id_for_session)
 
                 if agent_data:
                     voice_provider = agent_data.voice_provider
-                    logger.info("[Session %s] Agent voice provider: %s", self.session_id, voice_provider)
+                    logger.info("[Session %s] Agent voice provider from Redis: %s", self.session_id, voice_provider)
                 else:
-                    logger.warning("[Session %s] Agent not found: %s, falling back to default",
-                                 self.session_id, agent_id_for_session)
-
-            # Fall back to global setting if no per-agent provider
-            if not voice_provider:
-                voice_provider = "neo" if settings.ENABLE_CUSTOM_PIPELINE else "elevenlabs"
-                logger.info("[Session %s] Using global voice provider: %s", self.session_id, voice_provider)
+                    logger.error("[Session %s] Agent not found in Redis: %s", self.session_id, agent_id_for_session)
+                    await self.websocket.send_json({
+                        "type": "error",
+                        "message": f"Agent not found: {agent_id_for_session}"
+                    })
+                    return False
+            else:
+                # No agent specified, use default from Redis
+                logger.warning("[Session %s] No agent ID provided, using default voice provider: neo", self.session_id)
+                voice_provider = "neo"
 
             # For ElevenLabs, we need the ElevenLabs agent ID
             eleven_agent_id = None
@@ -105,15 +107,23 @@ class IntegratedVoiceSession:
                     })
                     return False
 
-            # Initialize based on provider selection
+            # Initialize based on provider selection from Redis agent data
             if voice_provider == "neo":
-                # Use custom pipeline (STT→LLM→TTS)
+                # Use NEO custom pipeline (Faster-Whisper STT → Azure LLM → Kokoro TTS)
                 logger.info("[Session %s] Initializing NEO (custom) voice provider", self.session_id)
                 return await self._initialize_custom_provider(agent_id_for_session or "default", agent_data)
-            else:
-                # Use ElevenLabs
+            elif voice_provider == "elevenlabs":
+                # Use ElevenLabs ConvAI provider
                 logger.info("[Session %s] Initializing ELEVENLABS voice provider", self.session_id)
                 return await self._initialize_elevenlabs_provider(eleven_agent_id)
+            else:
+                # Invalid provider specified in agent data
+                logger.error("[Session %s] Invalid voice provider: %s", self.session_id, voice_provider)
+                await self.websocket.send_json({
+                    "type": "error",
+                    "message": f"Invalid voice provider: {voice_provider}. Must be 'neo' or 'elevenlabs'"
+                })
+                return False
 
         except Exception as e:
             logger.error("[Session %s] Initialization error: %s", self.session_id, str(e), exc_info=True)
@@ -231,9 +241,9 @@ class IntegratedVoiceSession:
             return
 
         try:
-            # Route to appropriate provider
-            if self.use_new_provider and self.provider:
-                # Custom provider - direct audio processing
+            # Route to appropriate provider (determined by Redis agent data)
+            if self.provider:
+                # Custom provider (NEO) - direct audio processing
                 await self.provider.process_audio_chunk(audio_data)
             elif self.bridge:
                 # ElevenLabs provider - with VAD logic
@@ -532,8 +542,10 @@ class IntegratedVoiceSession:
         if self.provider:
             await self.provider.cleanup()
 
-        # Clear session config
-        clear_session_config(self.session_id)
+        # NOTE: Do NOT clear session config here!
+        # Session config must persist across multiple WebSocket connections
+        # (e.g., moderator and candidate both connecting to the same session).
+        # The session config will be cleaned up by the session timeout service.
 
         logger.info("[Session %s] Session cleaned up", self.session_id)
 

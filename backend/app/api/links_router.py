@@ -90,6 +90,7 @@ async def create_link(request: CreateLinkRequest):
             eleven_agent_id=agent.eleven_agent_id,
             dynamic_variables={},
             max_interview_minutes=request.maxMinutes or agent.max_interview_minutes,
+            agent_id=request.agentId,  # Pass agent ID so voice endpoint can fetch voice_provider from Redis
         )
 
         # Generate meeting room name and URL

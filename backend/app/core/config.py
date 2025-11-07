@@ -102,14 +102,8 @@ class Settings(BaseSettings):
     )
 
     # Voice Provider Configuration
-    VOICE_PROVIDER: str = Field(
-        default="elevenlabs",
-        description="Voice provider: 'elevenlabs' or 'custom'"
-    )
-    ENABLE_CUSTOM_PIPELINE: bool = Field(
-        default=False,
-        description="Enable custom STT→LLM→TTS pipeline"
-    )
+    # NOTE: Voice provider is now determined by agent data in Redis (voiceProvider field)
+    # Each agent specifies either "neo" (custom pipeline) or "elevenlabs"
 
     # AssemblyAI STT Configuration (Cloud API - Ultra-low latency)
     ASSEMBLYAI_API_KEY: str = Field(

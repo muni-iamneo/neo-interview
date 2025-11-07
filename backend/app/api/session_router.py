@@ -74,7 +74,8 @@ async def configure_session(session_id: str, request: ConfigureSessionRequest):
             session_id=session_id,
             eleven_agent_id=eleven_agent_id,
             dynamic_variables=request.dynamicVariables or {},
-            max_interview_minutes=max_interview_minutes
+            max_interview_minutes=max_interview_minutes,
+            agent_id=request.agentId,  # Pass agent ID so voice endpoint can fetch voice_provider from Redis
         )
         
         logger.info("Session configured: session=%s agent=%s vars=%s", 
