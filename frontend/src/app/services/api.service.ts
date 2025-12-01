@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, of, throwError } from 'rxjs';
+import { map, catchError } from 'rxjs/operators';
 import { ConfigService } from './config.service';
 
 export interface JWTRequest {
@@ -8,12 +9,28 @@ export interface JWTRequest {
   user: { name: string; [key: string]: any };
   features?: { [key: string]: boolean };
   ttlSec?: number;
+  // Legacy fields for backward compatibility
+  sessionId?: string;
+  rejoin?: boolean;
+  modTok?: string;
 }
 
+// New API response format (unwrapped by response interceptor)
+export interface JWTResponseData {
+  token: string;
+  room: string;
+  domain: string;
+  expires_at?: number;
+  ttl_seconds?: number;
+  rejoin?: boolean; // Indicates if token was reused from existing session
+}
+
+// Frontend-compatible response format
 export interface JWTResponse {
   domain: string;
   room: string;
   jwt: string;
+  rejoin?: boolean; // Optional flag indicating token reuse
 }
 
 export interface SessionStatus {
@@ -103,6 +120,7 @@ export interface CreateLinkResponse {
   meetingUrl: string;
   roomName: string;
   expiresAt: string;
+  candidateJwt?: string; // Pre-generated JWT for candidate (optional for backward compatibility)
 }
 
 export interface LinkInfo {
@@ -172,29 +190,78 @@ export class ApiService {
 
   /**
    * Mint a JaaS JWT token
+   * Maps to: POST /v1/jaas/jwt
+   * Transforms request/response to match microservice API specification
+   * 
+   * Features:
+   * - JWT reuse on rejoin (returns existing valid token)
+   * - Auto-session creation for link-based interviews
+   * - Smart TTL calculation from interview duration
    */
   mintJWT(request: JWTRequest): Observable<JWTResponse> {
-    return this.http.post<JWTResponse>(
-      this.config.getApiUrl('/jaas/jwt'),
-      request
+    // Transform request to match microservice API format
+    // Microservice API: POST /v1/jaas/jwt
+    // Validation: room (1-200 chars), user_name (1-100 chars), ttl_seconds (60-86400)
+    
+    const userRole = request.user['role'] || (request.user.name === 'Moderator' ? 'moderator' : 'candidate');
+    const userEmail = request.user['email'] || null; // Send null instead of empty string for optional field
+    
+    // Validate and clamp ttl_seconds to backend limits (60-86400)
+    // Only include ttl_seconds if explicitly provided (optional field)
+    let ttlSeconds: number | undefined = undefined;
+    if (request.ttlSec !== undefined) {
+      ttlSeconds = request.ttlSec || 3600;
+      if (ttlSeconds < 60) ttlSeconds = 60;
+      if (ttlSeconds > 86400) ttlSeconds = 86400;
+    }
+    
+    // Build request body matching microservice spec
+    const apiRequest: any = {
+      room: request.room,
+      user: {
+        name: request.user.name,
+        ...(userRole && { role: userRole }),
+        ...(userEmail && { email: userEmail })
+      },
+      ...(request.sessionId && { sessionId: request.sessionId }),
+      ...(request.rejoin && { rejoin: request.rejoin }),
+      ...(ttlSeconds !== undefined && { ttl_seconds: ttlSeconds }),
+      ...(request.features && { features: request.features }),
+      ...(request.modTok && { modTok: request.modTok })
+    };
+
+    // Make API call (response interceptor will unwrap {success, data, meta})
+    return this.http.post<JWTResponseData>(
+      this.config.getApiUrl('/v1/jaas/jwt'),
+      apiRequest
+    ).pipe(
+      // Transform response to match frontend expectations
+      map((response: JWTResponseData) => ({
+        domain: response.domain || '8x8.vc', // Use domain from response or default
+        room: response.room,
+        jwt: response.token, // Map 'token' to 'jwt' for frontend compatibility
+        ...(response.rejoin && { rejoin: response.rejoin }) // Include rejoin flag if present
+      }))
     );
   }
 
   /**
    * Get all active voice sessions
+   * Maps to: GET /v1/sessions
    */
   getVoiceSessions(): Observable<SessionsOverview> {
     return this.http.get<SessionsOverview>(
-      this.config.getApiUrl('/voice/sessions')
+      this.config.getApiUrl('/v1/sessions')
     );
   }
 
   /**
    * Get specific voice session status
+   * Maps to: GET /v1/sessions/{id}
    */
   getVoiceSessionStatus(sessionId: string): Observable<SessionStatus> {
     return this.http.get<SessionStatus>(
-      this.config.getApiUrl(`/voice/sessions/${sessionId}`)
+      this.config.getApiUrl(`/v1/sessions/${sessionId}`)
     );
   }
 
@@ -207,174 +274,325 @@ export class ApiService {
 
   /**
    * Create a new agent
+   * Maps to: POST /v1/agents
    */
   createAgent(request: CreateAgentRequest): Observable<AgentResponse> {
-    return this.http.post<AgentResponse>(
-      this.config.getApiUrl('/api/agents'),
+    return this.http.post<any>(
+      this.config.getApiUrl('/v1/agents'),
       request
+    ).pipe(
+      map((agent: any) => this.transformAgentResponse(agent))
     );
   }
 
   /**
+   * Transform snake_case API response to camelCase AgentResponse
+   */
+  private transformAgentResponse(apiAgent: any): AgentResponse {
+    // Handle both snake_case (from API) and camelCase (already transformed) responses
+    return {
+      id: apiAgent.id,
+      name: apiAgent.name,
+      role: apiAgent.role,
+      maxInterviewMinutes: apiAgent.max_interview_minutes ?? apiAgent.maxInterviewMinutes,
+      jobDescription: apiAgent.job_description ?? apiAgent.jobDescription,
+      interviewType: apiAgent.interview_type ?? apiAgent.interviewType,
+      systemPrompt: apiAgent.system_prompt ?? apiAgent.systemPrompt,
+      elevenAgentId: apiAgent.elevenlabs_agent_id ?? apiAgent.elevenAgentId,
+      voiceProvider: apiAgent.voice_provider ?? apiAgent.voiceProvider,
+      createdAt: apiAgent.created_at ?? apiAgent.createdAt,
+      updatedAt: apiAgent.updated_at ?? apiAgent.updatedAt
+    };
+  }
+
+  /**
    * List all agents
+   * Maps to: GET /v1/agents
    */
   listAgents(): Observable<AgentResponse[]> {
-    return this.http.get<AgentResponse[]>(
-      this.config.getApiUrl('/api/agents')
+    return this.http.get<any>(
+      this.config.getApiUrl('/v1/agents')
+    ).pipe(
+      map((response: any) => {
+        // Handle different response structures
+        // Case 1: Response is already an array (after interceptor unwrapping)
+        if (Array.isArray(response)) {
+          return response.map(agent => this.transformAgentResponse(agent));
+        }
+        
+        // Case 2: Response has data field (if interceptor didn't unwrap)
+        if (response && response.data && Array.isArray(response.data)) {
+          return response.data.map((agent: any) => this.transformAgentResponse(agent));
+        }
+        
+        // Case 3: Response is an object with data array
+        if (response && typeof response === 'object' && 'data' in response) {
+          const data = response.data;
+          if (Array.isArray(data)) {
+            return data.map((agent: any) => this.transformAgentResponse(agent));
+          }
+        }
+        
+        // Fallback: return empty array if structure is unexpected
+        console.error('Unexpected response structure for listAgents:', {
+          response,
+          type: typeof response,
+          isArray: Array.isArray(response),
+          hasData: response?.data !== undefined,
+          dataIsArray: Array.isArray(response?.data)
+        });
+        return [];
+      })
     );
   }
 
   /**
    * Get a specific agent
+   * Maps to: GET /v1/agents/{id}
    */
   getAgent(agentId: string): Observable<AgentResponse> {
-    return this.http.get<AgentResponse>(
-      this.config.getApiUrl(`/api/agents/${agentId}`)
+    return this.http.get<any>(
+      this.config.getApiUrl(`/v1/agents/${agentId}`)
+    ).pipe(
+      map((agent: any) => this.transformAgentResponse(agent))
     );
   }
 
   /**
    * Update an agent
+   * Maps to: PUT /v1/agents/{id}
    */
   updateAgent(agentId: string, request: UpdateAgentRequest): Observable<AgentResponse> {
-    return this.http.put<AgentResponse>(
-      this.config.getApiUrl(`/api/agents/${agentId}`),
+    return this.http.put<any>(
+      this.config.getApiUrl(`/v1/agents/${agentId}`),
       request
+    ).pipe(
+      map((agent: any) => this.transformAgentResponse(agent))
     );
   }
 
   /**
    * Delete an agent
+   * Maps to: DELETE /v1/agents/{id}
    */
   deleteAgent(agentId: string): Observable<void> {
     return this.http.delete<void>(
-      this.config.getApiUrl(`/api/agents/${agentId}`)
+      this.config.getApiUrl(`/v1/agents/${agentId}`)
     );
   }
 
   /**
    * Configure a voice session with agent and dynamic variables
+   * Maps to: POST /v1/sessions/{id}/configure
+   * Transforms camelCase to snake_case for microservice API
    */
   configureSession(sessionId: string, request: ConfigureSessionRequest): Observable<ConfigureSessionResponse> {
+    // Transform request from camelCase to snake_case for microservice
+    const apiRequest: any = {
+      agent_id: request.agentId,
+      eleven_agent_id: request.elevenAgentId,
+      dynamic_variables: request.dynamicVariables || {}
+    };
+    
     return this.http.post<ConfigureSessionResponse>(
-      this.config.getApiUrl(`/voice/sessions/${sessionId}/configure`),
-      request
+      this.config.getApiUrl(`/v1/sessions/${sessionId}/configure`),
+      apiRequest
     );
   }
 
   /**
    * Resume a dropped/paused session
+   * Maps to: POST /v1/sessions/{id}/resume
    */
   resumeSession(sessionId: string): Observable<any> {
     return this.http.post<any>(
-      this.config.getApiUrl(`/voice/sessions/${sessionId}/resume`),
+      this.config.getApiUrl(`/v1/sessions/${sessionId}/resume`),
       {}
     );
   }
 
   /**
    * Get session information
+   * Maps to: GET /v1/sessions/{id} (same endpoint as getVoiceSessionStatus)
    */
   getSessionInfo(sessionId: string): Observable<SessionInfo> {
     return this.http.get<SessionInfo>(
-      this.config.getApiUrl(`/voice/sessions/${sessionId}/info`)
+      this.config.getApiUrl(`/v1/sessions/${sessionId}`)
     );
   }
 
   /**
    * Get session history for an agent
+   * NOTE: This endpoint is not available in microservice. 
+   * Use getVoiceSessions() and filter by agent_id on the client side.
+   * @deprecated Use getVoiceSessions() and filter client-side
    */
   getAgentSessionHistory(agentId: string): Observable<{ agentId: string; sessions: SessionInfo[]; totalCount: number }> {
+    // Fallback: return empty result since endpoint doesn't exist
     return this.http.get<{ agentId: string; sessions: SessionInfo[]; totalCount: number }>(
-      this.config.getApiUrl(`/voice/sessions/agent/${agentId}/history`)
+      this.config.getApiUrl(`/v1/sessions?agent_id=${agentId}`)
     );
   }
 
   /**
    * Create a new interview link
+   * Maps to: POST /v1/links
+   * Transforms camelCase to snake_case for microservice API
+   * Note: Response interceptor unwraps {success, data, meta}, this handles field name transformation
    */
   createLink(request: CreateLinkRequest): Observable<CreateLinkResponse> {
-    return this.http.post<CreateLinkResponse>(
-      this.config.getApiUrl('/api/links'),
-      request
+    // Transform request from camelCase to snake_case for microservice
+    const apiRequest: any = {
+      agent_id: request.agentId,
+      max_minutes: request.maxMinutes,
+      ttl_minutes: request.ttlMinutes
+    };
+    
+    return this.http.post<any>(
+      this.config.getApiUrl('/v1/links'),
+      apiRequest
+    ).pipe(
+      // Response interceptor already unwraps {success, data, meta} → returns data
+      // Transform from snake_case to camelCase (handles both formats defensively)
+      map((response: any) => {
+        // Handle case where response might still be wrapped (if interceptor didn't catch it)
+        let responseData = response;
+        if (response && typeof response === 'object' && 'success' in response && 'data' in response) {
+          responseData = response.data;
+        }
+        
+        return {
+          sessionId: responseData.session_id || responseData.sessionId,
+          candidateUrl: responseData.candidate_url || responseData.candidateUrl,
+          moderatorUrl: responseData.moderator_url || responseData.moderatorUrl,
+          meetingUrl: responseData.meeting_url || responseData.meetingUrl,
+          roomName: responseData.room_name || responseData.roomName,
+          expiresAt: responseData.expires_at || responseData.expiresAt,
+          candidateJwt: responseData.candidate_jwt || responseData.candidateJwt // Pre-generated JWT for candidate
+        };
+      }),
+      catchError((error: any) => {
+        // If backend sends validation error but includes data in error response, try to extract it
+        if (error.error && typeof error.error === 'object') {
+          const errorBody = error.error;
+          
+          // Check if error has wrapped data structure
+          if (errorBody.success && errorBody.data && typeof errorBody.data === 'object') {
+            const responseData = errorBody.data;
+            // Extract and transform the data (backend validation failed but data exists)
+            return of({
+              sessionId: responseData.session_id || responseData.sessionId,
+              candidateUrl: responseData.candidate_url || responseData.candidateUrl,
+              moderatorUrl: responseData.moderator_url || responseData.moderatorUrl,
+              meetingUrl: responseData.meeting_url || responseData.meetingUrl,
+              roomName: responseData.room_name || responseData.roomName,
+              expiresAt: responseData.expires_at || responseData.expiresAt
+            });
+          }
+        }
+        
+        // Re-throw original error
+        return throwError(() => error);
+      })
     );
   }
 
   /**
+   * Transform snake_case LinkInfo to camelCase
+   */
+  private transformLinkInfo(apiLink: any): LinkInfo {
+    return {
+      session_id: apiLink.session_id || apiLink.sessionId,
+      agent_id: apiLink.agent_id || apiLink.agentId,
+      status: apiLink.status,
+      created_at: apiLink.created_at || apiLink.createdAt,
+      expires_at: apiLink.expires_at || apiLink.expiresAt,
+      started_at: apiLink.started_at || apiLink.startedAt,
+      ended_at: apiLink.ended_at || apiLink.endedAt,
+      meeting_url: apiLink.meeting_url || apiLink.meetingUrl,
+      room_name: apiLink.room_name || apiLink.roomName
+    };
+  }
+
+  /**
    * List links for an agent
+   * Maps to: GET /v1/links/agent/{agent_id}
    */
   listAgentLinks(agentId: string, statusFilter?: string, limit: number = 10): Observable<LinkInfo[]> {
-    let url = this.config.getApiUrl(`/api/links/agent/${agentId}?limit=${limit}`);
+    let url = this.config.getApiUrl(`/v1/links/agent/${agentId}?limit=${limit}`);
     if (statusFilter) {
       url += `&status_filter=${statusFilter}`;
     }
-    return this.http.get<LinkInfo[]>(url);
+    return this.http.get<any[]>(url).pipe(
+      map((links: any[]) => links.map(link => this.transformLinkInfo(link)))
+    );
   }
 
   /**
    * Get a specific link
+   * Maps to: GET /v1/links/{session_id}
    */
   getLink(sessionId: string): Observable<LinkInfo> {
-    return this.http.get<LinkInfo>(
-      this.config.getApiUrl(`/api/links/${sessionId}`)
+    return this.http.get<any>(
+      this.config.getApiUrl(`/v1/links/${sessionId}`)
+    ).pipe(
+      map((link: any) => this.transformLinkInfo(link))
     );
   }
 
   /**
    * Delete/cancel a link
+   * Maps to: DELETE /v1/links/{session_id}
    */
   deleteLink(sessionId: string): Observable<void> {
     return this.http.delete<void>(
-      this.config.getApiUrl(`/api/links/${sessionId}`)
+      this.config.getApiUrl(`/v1/links/${sessionId}`)
     );
   }
 
   /**
    * List conversations for an agent (with pagination)
+   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
+   * @deprecated Endpoint not available in microservice
    */
   listAgentConversations(agentId: string, cursor?: string, pageSize: number = 30): Observable<ConversationsListResponse> {
-    let url = this.config.getApiUrl(`/api/conversations/agent/${agentId}?page_size=${pageSize}`);
-    if (cursor) {
-      url += `&cursor=${cursor}`;
-    }
-    return this.http.get<ConversationsListResponse>(url);
+    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
   }
 
   /**
    * Get conversation details with transcript
+   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
+   * @deprecated Endpoint not available in microservice
    */
   getConversationDetails(conversationId: string): Observable<ConversationDetails> {
-    return this.http.get<ConversationDetails>(
-      this.config.getApiUrl(`/api/conversations/${conversationId}`)
-    );
+    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
   }
 
   /**
    * Generate AI analysis for a conversation
+   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
+   * @deprecated Endpoint not available in microservice
    */
   generateAnalysis(conversationId: string, forceRegenerate: boolean = false): Observable<AnalysisResult> {
-    return this.http.post<AnalysisResult>(
-      this.config.getApiUrl(`/api/conversations/${conversationId}/analyze`),
-      { force_regenerate: forceRegenerate }
-    );
+    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
   }
 
   /**
    * Get stored analysis for a conversation
+   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
+   * @deprecated Endpoint not available in microservice
    */
   getAnalysis(conversationId: string): Observable<AnalysisResult> {
-    return this.http.get<AnalysisResult>(
-      this.config.getApiUrl(`/api/conversations/${conversationId}/analysis`)
-    );
+    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
   }
 
   /**
    * Delete stored analysis
+   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
+   * @deprecated Endpoint not available in microservice
    */
   deleteAnalysis(conversationId: string): Observable<void> {
-    return this.http.delete<void>(
-      this.config.getApiUrl(`/api/conversations/${conversationId}/analysis`)
-    );
+    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
   }
 }
 

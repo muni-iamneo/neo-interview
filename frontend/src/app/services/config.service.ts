@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
+import { AuthService } from './auth.service';
 
 /**
  * Configuration Service
@@ -8,6 +9,8 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class ConfigService {
+  private authService = inject(AuthService);
+
   // API Configuration
   readonly API_BASE_URL = 'http://localhost:8000';
   readonly WS_BASE_URL = 'ws://localhost:8000';
@@ -49,9 +52,11 @@ export class ConfigService {
 
   /**
    * Get WebSocket URL for voice connection
+   * New format: ws://localhost:8000/v1/ws/voice/{sessionId}?token={JWT}
    */
   getVoiceWebSocketUrl(sessionId: string): string {
-    return `${this.WS_BASE_URL}/agent/${sessionId}/voice`;
+    const token = this.authService.getToken();
+    return `${this.WS_BASE_URL}/v1/ws/voice/${sessionId}?token=${encodeURIComponent(token)}`;
   }
 
   /**
