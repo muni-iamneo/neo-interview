@@ -1,4 +1,4 @@
-import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
+import { HttpInterceptorFn, HttpErrorResponse, HttpResponse } from '@angular/common/http';
 import { catchError, map, throwError } from 'rxjs';
 
 /**
@@ -20,24 +20,29 @@ interface ApiResponse<T> {
  */
 export const responseInterceptor: HttpInterceptorFn = (req, next) => {
   return next(req).pipe(
-    map((response: any) => {
-      // Skip unwrapping for non-JSON responses or if response is already unwrapped
-      if (!response || typeof response !== 'object') {
-        return response;
-      }
+    map((event) => {
+      // Check if this is an HttpResponse
+      if (event instanceof HttpResponse) {
+        const body = event.body;
 
-      // Check if response has the standard API format
-      if ('success' in response && 'data' in response) {
-        const apiResponse = response as ApiResponse<any>;
-        
-        // If response has the standard format, unwrap it
-        if (apiResponse.success !== undefined && apiResponse.data !== undefined) {
-          // Return the data directly
-          return apiResponse.data;
+        // Skip unwrapping for non-JSON responses or if response is already unwrapped
+        if (!body || typeof body !== 'object') {
+          return event;
+        }
+
+        // Check if response has the standard API format
+        if ('success' in body && 'data' in body) {
+          const apiResponse = body as ApiResponse<any>;
+          
+          // If response has the standard format, unwrap it
+          if (apiResponse.success !== undefined && apiResponse.data !== undefined) {
+            // Return a cloned HttpResponse with the unwrapped data as the body
+            return event.clone({ body: apiResponse.data });
+          }
         }
       }
 
-      return response;
+      return event;
     }),
     catchError((error: HttpErrorResponse) => {
       // Handle error responses with standard format

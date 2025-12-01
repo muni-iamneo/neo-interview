@@ -236,12 +236,60 @@ export class ApiService {
       apiRequest
     ).pipe(
       // Transform response to match frontend expectations
-      map((response: JWTResponseData) => ({
-        domain: response.domain || '8x8.vc', // Use domain from response or default
-        room: response.room,
-        jwt: response.token, // Map 'token' to 'jwt' for frontend compatibility
-        ...(response.rejoin && { rejoin: response.rejoin }) // Include rejoin flag if present
-      }))
+      map((response: any) => {
+        console.log('🔍 mintJWT raw response:', response);
+
+        // UNWRAP: Handle case where interceptor didn't unwrap
+        let data = response;
+        if (response && response.data) {
+           console.log('⚠️ Response was not unwrapped by interceptor. Unwrapping manually.');
+           data = response.data;
+        }
+
+        // Handle both old and new response formats
+        let room = data.room;
+        let domain = data.domain || '8x8.vc';
+        const jwt = data.candidateJwt || data.token || data.jwt;
+        
+        // Strategy 1: Extract room and tenant from meetingUrl if available
+        if (data.meetingUrl) {
+          try {
+            const url = new URL(data.meetingUrl);
+            domain = url.hostname;
+            // Path is usually /tenant/roomName
+            const pathParts = url.pathname.split('/').filter(p => p);
+            if (pathParts.length >= 2) {
+              room = `${pathParts[0]}/${pathParts[1]}`;
+            }
+          } catch (e) {
+            console.warn('Failed to parse meetingUrl:', e);
+          }
+        }
+
+        // Strategy 2: Extract from JWT if room is still missing or incomplete
+        if ((!room || !room.includes('/')) && jwt) {
+          try {
+            const parts = jwt.split('.');
+            if (parts.length === 3) {
+              const payload = JSON.parse(atob(parts[1]));
+              if (payload.sub && payload.room) {
+                // JaaS format: tenant/room
+                room = `${payload.sub}/${payload.room}`;
+                console.log('✅ Extracted room from JWT:', room);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to decode JWT for room extraction:', e);
+          }
+        }
+
+        return {
+          domain: domain,
+          room: room,
+          jwt: jwt,
+          ...(data.rejoin && { rejoin: data.rejoin })
+        };
+      })
     );
   }
 

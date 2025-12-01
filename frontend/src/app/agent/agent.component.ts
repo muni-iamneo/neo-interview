@@ -269,10 +269,12 @@ export class AgentComponent implements OnInit, OnDestroy {
 
     this.voiceWs.onmessage = async (event) => {
       if (event.data instanceof Blob) {
+        console.log(`📥 WS Received Audio Blob: ${event.data.size} bytes`);
         await this.injectAudioIntoJitsi(event.data);
       } else {
         try {
           const data = JSON.parse(event.data);
+          console.log(`📥 WS Received Text: ${data.type}`, data);
           if (data.type === 'text_response') {
             this.agentResponses.update((t) => t + data.text + '\n');
           } else if (data.type === 'error') {

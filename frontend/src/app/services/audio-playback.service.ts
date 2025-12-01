@@ -54,13 +54,23 @@ export class AudioPlaybackService {
   async injectAudioBlob(audioBlob: Blob): Promise<MediaStreamTrack | null> {
     try {
       if (!this.agentPlaybackContext || this.agentPlaybackContext.state === 'closed') {
+        console.warn('⚠️ Playback context closed, re-initializing...');
         await this.initializePlaybackContext();
       }
 
-      await this.resumeAudioContexts();
+      if (this.agentPlaybackContext?.state === 'suspended') {
+        console.warn('⚠️ Playback context suspended, attempting resume...');
+        await this.resumeAudioContexts();
+      }
 
       const arrayBuffer = await audioBlob.arrayBuffer();
-      if (arrayBuffer.byteLength === 0) return null;
+      if (arrayBuffer.byteLength === 0) {
+        console.warn('⚠️ Received empty audio blob');
+        return null;
+      }
+
+      // Log every chunk for debugging
+      console.log(`🔊 Processing audio chunk: ${arrayBuffer.byteLength} bytes, ContextState: ${this.agentPlaybackContext?.state}`);
 
       if (arrayBuffer.byteLength % 2 !== 0) {
         console.warn('⚠️ Odd-length PCM chunk');
@@ -98,9 +108,7 @@ export class AudioPlaybackService {
       const duration = buffer.duration;
       this.nextPlaybackTime += duration;
 
-      if (Math.random() < 0.1) {
-        console.log(`🔊 Agent chunk queued (${(duration * 1000).toFixed(1)} ms) next=${this.nextPlaybackTime.toFixed(3)}`);
-      }
+      console.log(`🔊 Agent chunk queued (${(duration * 1000).toFixed(1)} ms) next=${this.nextPlaybackTime.toFixed(3)}`);
 
       // Return the audio track for injection into conference
       return this.agentOutDest?.stream.getAudioTracks()[0] || null;
