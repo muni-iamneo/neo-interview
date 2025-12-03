@@ -241,7 +241,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
         // Now mint JWT and start the session
         const request: JWTRequest = {
           room: sessionId,  // Use sessionId as room ID for consistent rejoin
-          user: { name: 'Moderator' },
+          user: { name: 'Moderator', role: 'moderator' },
           ttlSec: jwtTtlSeconds,  // Set TTL based on interview duration + buffer
           sessionId: sessionId  // Pass sessionId for tracking
         } as any;

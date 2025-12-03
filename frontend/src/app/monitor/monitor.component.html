@@ -1,10 +1,55 @@
-<!-- Silent redirect for moderator - no UI needed -->
-<div *ngIf="error()" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-  <div style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); max-width: 500px; text-align: center;">
-    <h2 style="color: #dc3545; margin: 0 0 20px 0;">Moderator Access Denied</h2>
-    <p style="color: #666; margin-bottom: 20px;">{{ error() }}</p>
-    <a href="/studio" style="display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
-      Go to Agents Studio
-    </a>
+<div class="monitor-container">
+  <div *ngIf="loading()" class="loading-overlay">
+    <div class="spinner"></div>
+    <p>Loading session...</p>
+  </div>
+
+  <div *ngIf="error()" class="error-container">
+    <h2>Moderator Access Denied</h2>
+    <p>{{ error() }}</p>
+    <a href="/studio" class="btn-primary">Go to Agents Studio</a>
+  </div>
+
+  <div *ngIf="!loading() && !error() && linkInfo()" class="monitor-card">
+    <div class="card-header">
+      <h2>Moderator Join</h2>
+      <p>You are about to join an interview session as a moderator.</p>
+    </div>
+
+    <div class="card-body">
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="label">Session ID</span>
+          <span class="value">{{ linkInfo().session_id }}</span>
+        </div>
+        <div class="info-item">
+          <span class="label">Status</span>
+          <span class="badge" [ngClass]="getStatusBadgeClass(linkInfo().status)">
+            {{ linkInfo().status }}
+          </span>
+        </div>
+        <div class="info-item">
+          <span class="label">Created</span>
+          <span class="value">{{ formatDate(linkInfo().created_at) }}</span>
+        </div>
+        <div class="info-item" *ngIf="linkInfo().expires_at">
+          <span class="label">Expires</span>
+          <span class="value">{{ formatDate(linkInfo().expires_at) }}</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button 
+          class="btn-join"
+          (click)="joinAsMonitor()"
+          [disabled]="linkInfo().status !== 'pending' && linkInfo().status !== 'active'"
+        >
+          Join Meeting
+        </button>
+        <p *ngIf="linkInfo().status !== 'pending' && linkInfo().status !== 'active'" class="status-note">
+          This link is no longer active and cannot be joined.
+        </p>
+      </div>
+    </div>
   </div>
 </div>

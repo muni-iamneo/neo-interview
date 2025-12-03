@@ -58,11 +58,6 @@ export class MonitorComponent implements OnInit {
         this.linkInfo.set(link);
         this.loading.set(false);
 
-        // Automatically join if link is active
-        if (link.status === 'active' || link.status === 'pending') {
-          // Small delay to show the info
-          setTimeout(() => this.joinAsMonitor(), 1000);
-        }
       },
       error: (err) => {
         console.error('Error loading link:', err);

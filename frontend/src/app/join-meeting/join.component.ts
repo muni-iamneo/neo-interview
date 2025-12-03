@@ -50,7 +50,7 @@ export class JoinComponent implements OnInit {
       room,
       user: {
         name: 'Candidate',
-        role: 'candidate',
+        role: 'participant',
       },
       features: {
         transcription: true,
@@ -114,7 +114,7 @@ export class JoinComponent implements OnInit {
       room,
       user: {
         name,
-        role: 'candidate',
+        role: 'participant',
       },
       features: {
         transcription: true,

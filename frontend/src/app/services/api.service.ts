@@ -203,7 +203,7 @@ export class ApiService {
     // Microservice API: POST /v1/jaas/jwt
     // Validation: room (1-200 chars), user_name (1-100 chars), ttl_seconds (60-86400)
     
-    const userRole = request.user['role'] || (request.user.name === 'Moderator' ? 'moderator' : 'candidate');
+    const userRole = request.user['role'] || 'participant';
     const userEmail = request.user['email'] || null; // Send null instead of empty string for optional field
     
     // Validate and clamp ttl_seconds to backend limits (60-86400)
