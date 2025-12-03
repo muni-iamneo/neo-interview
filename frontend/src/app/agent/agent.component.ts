@@ -102,10 +102,7 @@ export class AgentComponent implements OnInit, OnDestroy {
       this.config.JITSI_IFRAME_RETRY_ATTEMPTS,
       this.config.JITSI_IFRAME_RETRY_DELAY,
       () => {
-        if (!this.wsStarted) {
-          this.wsStarted = true;
-          this.setupWebSockets(this.sessionManagement.getSessionId());
-        }
+        console.log('✅ Jitsi Iframe joined. Waiting for participant to join before connecting WS.');
       }
     );
 
@@ -129,11 +126,7 @@ export class AgentComponent implements OnInit, OnDestroy {
         console.warn('⚠️ Failed to create placeholder audio track:', err);
       }
 
-      if (!this.wsStarted) {
-        this.wsStarted = true;
-        this.setupWebSockets(this.sessionManagement.getSessionId());
-      }
-
+      console.log('✅ Headless conference joined. Waiting for participant track...');
       this.jitsiService.startPollingForTrack();
     });
 
@@ -144,7 +137,16 @@ export class AgentComponent implements OnInit, OnDestroy {
 
     // Remote track removed
     this.jitsiService.remoteTrackRemoved$.subscribe(() => {
+      console.log('👤 Participant left/Track removed. Closing WebSocket.');
       this.mediaRecording.stopRecording();
+      
+      // Close WebSocket to end session
+      if (this.voiceWs) {
+        this.voiceWs.close(1000, 'Participant left');
+        this.voiceWs = null;
+        this.wsStarted = false;
+      }
+
       this.jitsiService.startPollingForTrack();
     });
 
@@ -193,6 +195,14 @@ export class AgentComponent implements OnInit, OnDestroy {
     }
 
     console.log(`[handleRemoteTrack] Processing new track ${mediaTrack.id} - Candidate has joined!`);
+    
+    // Ensure WebSocket is open (reconnect if it was closed when participant left)
+    if (!this.voiceWs || this.voiceWs.readyState === WebSocket.CLOSED) {
+      console.log('🔄 Re-initializing WebSocket for new track/participant');
+      this.wsStarted = true;
+      this.setupWebSockets(this.sessionManagement.getSessionId());
+    }
+
     this.jitsiService.setActiveRemoteTrackId(mediaTrack.id);
 
     const stream = new MediaStream([mediaTrack]);
