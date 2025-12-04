@@ -301,6 +301,10 @@ export class AgentComponent implements OnInit, OnDestroy {
           } else if (data.type === 'warning' && data.remaining_seconds) {
             console.warn('⏰ Interview ending soon:', data.remaining_seconds, 'seconds');
             this.agentResponses.update((t) => t + `[WARN] Interview ending in ${data.remaining_seconds} seconds\n`);
+          } else if (data.type === 'interruption') {
+            console.log('🛑 Agent interrupted by user');
+            this.audioPlayback.clearBuffer();
+            this.agentResponses.update((t) => t + '[INFO] Candidate interrupted agent\n');
           }
         } catch (e) {
           console.error('Failed to parse message:', e);

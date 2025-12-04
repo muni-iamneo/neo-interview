@@ -9,7 +9,8 @@ import { Injectable } from '@angular/core';
 })
 export class AuthService {
   // Hardcoded JWT token for development (team_id: "hire")
-  private readonly AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MywiZW1haWwiOiJtdW5peWFwcGFuLm1hbmlAaWFtbmVvLmFpIiwiZXhwaXJlX3RpbWUiOiIyMDI1LTEyLTAzVDExOjM1OjE0LjE0NTQyMSswMDowMCIsInBhc3N3b3JkX3ZlcnNpb24iOiJTd3QxclQifQ.V5dgtXdCkoS5cNlU2MQ3YluTps3cX23CGXncMoUnCbg';
+  // this token is generated from the backend with expiry time of 1 hour
+  private readonly AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1haWwiOiJydXNob0BpYW1uZW8uYWkiLCJleHBpcmVfdGltZSI6IjIwMjUtMTItMDRUMTQ6MzY6MTguOTg3MzkwKzAwOjAwIiwicGFzc3dvcmRfdmVyc2lvbiI6ImN5UWxCTCJ9.htwUgbv0FvYWEQ-t051uzab64Er5DIW4d2NPcJEwBZw';
   
   // Team ID for X-Team-ID header
   private readonly TEAM_ID = 'hire';

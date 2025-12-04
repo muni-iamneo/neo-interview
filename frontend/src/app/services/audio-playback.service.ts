@@ -12,6 +12,7 @@ export class AudioPlaybackService {
   private agentOutDest: MediaStreamAudioDestinationNode | null = null;
   private nextPlaybackTime = 0;
   private audioContextsResumed = false;
+  private activeNodes: Set<AudioBufferSourceNode> = new Set();
 
   constructor() {}
 
@@ -104,6 +105,12 @@ export class AudioPlaybackService {
         src.connect(this.agentOutDest);
       }
 
+      // Track this node for potential interruption
+      this.activeNodes.add(src);
+      src.onended = () => {
+        this.activeNodes.delete(src);
+      };
+
       src.start(this.nextPlaybackTime);
       const duration = buffer.duration;
       this.nextPlaybackTime += duration;
@@ -130,6 +137,36 @@ export class AudioPlaybackService {
    */
   hasDestination(): boolean {
     return this.agentOutDest !== null;
+  }
+
+  /**
+   * Clear all scheduled audio and reset playback state
+   * Called when user interrupts agent speech
+   */
+  clearBuffer(): void {
+    if (!this.agentPlaybackContext) {
+      return;
+    }
+    
+    console.log('🛑 Clearing audio buffer due to interruption');
+    
+    // Stop all active/scheduled audio nodes
+    const nodesToStop = Array.from(this.activeNodes);
+    console.log(`🛑 Stopping ${nodesToStop.length} active audio nodes`);
+    
+    for (const node of nodesToStop) {
+      try {
+        node.stop();
+        this.activeNodes.delete(node);
+      } catch (e) {
+        // Node might have already ended, ignore error
+      }
+    }
+    
+    // Reset playback timing to current time
+    this.nextPlaybackTime = this.agentPlaybackContext.currentTime;
+    
+    console.log('✅ Audio buffer cleared, playback reset');
   }
 
   /**
