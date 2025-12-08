@@ -28,10 +28,10 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   agentForm = {
     name: '',
     role: '',
-    maxInterviewMinutes: 30,
-    jobDescription: '',
     interviewType: 'technical',
-    systemPrompt: ''
+    systemPrompt: '',
+    firstMessage: '',
+    language: 'en'
   };
   
   // Interview types available
@@ -102,7 +102,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
         
         if (agents.length > 0 && !this.selectedAgent()) {
           this.selectedAgent.set(agents[0]);
-          this.interviewSettings.meetingDuration = agents[0].maxInterviewMinutes;
+          this.interviewSettings.meetingDuration = agents[0].maxInterviewMinutes || 30;
         }
         
         console.log('✅ Loaded agents:', agents.length);
@@ -117,7 +117,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
 
   selectAgent(agent: AgentResponse): void {
     this.selectedAgent.set(agent);
-    this.interviewSettings.meetingDuration = agent.maxInterviewMinutes;
+    this.interviewSettings.meetingDuration = agent.maxInterviewMinutes || 30;
     console.log('Selected agent:', agent.name);
     // Load session history when agent is selected
     if (this.activeTab() === 'history') {
@@ -157,10 +157,10 @@ export class ModeratorComponent implements OnInit, OnDestroy {
       this.agentForm = {
         name: '',
         role: '',
-        maxInterviewMinutes: 30,
-        jobDescription: '',
         interviewType: 'technical',
-        systemPrompt: ''
+        systemPrompt: '',
+        firstMessage: '',
+        language: 'en'
       };
     }
   }
@@ -168,13 +168,8 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   createAgent(): void {
     this.formError.set('');
     
-    if (!this.agentForm.name || !this.agentForm.role || !this.agentForm.jobDescription) {
+    if (!this.agentForm.name || !this.agentForm.role) {
       this.formError.set('Please fill in all required fields');
-      return;
-    }
-    
-    if (this.agentForm.maxInterviewMinutes < 5 || this.agentForm.maxInterviewMinutes > 180) {
-      this.formError.set('Interview duration must be between 5 and 180 minutes');
       return;
     }
     
@@ -183,10 +178,11 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     const request: CreateAgentRequest = {
       name: this.agentForm.name,
       role: this.agentForm.role,
-      maxInterviewMinutes: this.agentForm.maxInterviewMinutes,
-      jobDescription: this.agentForm.jobDescription,
       interviewType: this.agentForm.interviewType,
-      systemPrompt: this.agentForm.systemPrompt || undefined
+      systemPrompt: this.agentForm.systemPrompt || undefined,
+      firstMessage: this.agentForm.firstMessage || undefined,
+      language: this.agentForm.language
+      // maxInterviewMinutes and jobDescription removed from Agent creation
     };
     
     this.apiService.createAgent(request).subscribe({
@@ -197,7 +193,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
         
         this.agents.update(list => [...list, agent]);
         this.selectedAgent.set(agent);
-        this.interviewSettings.meetingDuration = agent.maxInterviewMinutes;
+        this.interviewSettings.meetingDuration = agent.maxInterviewMinutes || 30;
         
         this.agentResponses.update(t => t + `[Success] Agent "${agent.name}" created\n`);
       },
@@ -225,7 +221,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
       dynamicVariables: {
         user_name: this.interviewSettings.userName,
         meeting_duration: this.interviewSettings.meetingDuration.toString(),
-        job_description: agent.jobDescription,
+        job_description: agent.jobDescription || '',
         role: agent.role
       }
     }).subscribe({
@@ -383,7 +379,7 @@ export class ModeratorComponent implements OnInit, OnDestroy {
           // Session might not exist yet, check basic status
           this.apiService.getVoiceSessionStatus(sessionId).subscribe({
             next: (status) => {
-              if (status.active) {
+              if (status.status === 'active') {
                 console.log('✅ Voice session active');
                 this.agentResponses.update((t) => 
                   t + '[System] Voice conversation started\n'

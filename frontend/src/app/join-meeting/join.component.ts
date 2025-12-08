@@ -12,7 +12,7 @@ import { ApiService, JWTRequest } from '../services/api.service';
   styleUrls: ['./join.component.css'],
 })
 export class JoinComponent implements OnInit {
-  sessionId = signal<string>('');
+  interviewId = signal<string>('');
   candidateName = signal<string>('');
   loading = signal(false);
   error = signal<string | null>(null);
@@ -25,25 +25,25 @@ export class JoinComponent implements OnInit {
   ) {}
 
   ngOnInit() {
-    // Extract session ID from route
+    // Extract interview ID from route
     this.route.params.subscribe((params) => {
-      const id = params['sessionId'];
+      const id = params['interviewId'];
       if (id) {
-        this.sessionId.set(id);
+        this.interviewId.set(id);
         // Auto-join immediately without asking for name
         this.autoJoinInterview(id);
       } else {
-        this.error.set('Invalid session ID');
+        this.error.set('Invalid interview ID');
       }
     });
   }
 
-  autoJoinInterview(sessionId: string) {
+  autoJoinInterview(interviewId: string) {
     this.loading.set(true);
     this.error.set(null);
 
-    // Generate room name based on session ID
-    const room = `interview-${sessionId.substring(0, 8)}`;
+    // Generate room name based on interview ID
+    const room = `interview-${interviewId.substring(0, 8)}`;
 
     // Mint JWT with a default user name (Jitsi will let them change it)
     const jwtRequest: JWTRequest = {
@@ -55,25 +55,21 @@ export class JoinComponent implements OnInit {
       features: {
         transcription: true,
       },
+      interviewId // Use new field
     };
-
-    // Add sessionId to request body
-    const requestBody = {
-      ...jwtRequest,
-      sessionId,
-    };
-
-    this.apiService.mintJWT(requestBody as any).subscribe({
+    
+    // Pass strictly typed request
+    this.apiService.mintJWT(jwtRequest).subscribe({
       next: (response) => {
         // Store session data in sessionStorage
-        sessionStorage.setItem('currentSessionId', sessionId);
+        sessionStorage.setItem('currentSessionId', interviewId);
         sessionStorage.setItem(
           'jaasSession',
           JSON.stringify({
             domain: response.domain,
             room: response.room,
             jwt: response.jwt,
-            sessionId,
+            interviewId,
           })
         );
 
@@ -97,17 +93,17 @@ export class JoinComponent implements OnInit {
       return;
     }
 
-    const sessionId = this.sessionId();
-    if (!sessionId) {
-      this.error.set('Invalid session ID');
+    const interviewId = this.interviewId();
+    if (!interviewId) {
+      this.error.set('Invalid interview ID');
       return;
     }
 
     this.loading.set(true);
     this.error.set(null);
 
-    // Generate a random room name based on session ID
-    const room = `interview-${sessionId.substring(0, 8)}`;
+    // Generate room name based on interview ID
+    const room = `interview-${interviewId.substring(0, 8)}`;
 
     // Mint JWT for candidate
     const jwtRequest: JWTRequest = {
@@ -119,25 +115,20 @@ export class JoinComponent implements OnInit {
       features: {
         transcription: true,
       },
+      interviewId
     };
-
-    // Add sessionId to request body
-    const requestBody = {
-      ...jwtRequest,
-      sessionId,
-    };
-
-    this.apiService.mintJWT(requestBody as any).subscribe({
+    
+    this.apiService.mintJWT(jwtRequest).subscribe({
       next: (response) => {
         // Store session data in sessionStorage
-        sessionStorage.setItem('currentSessionId', sessionId);
+        sessionStorage.setItem('currentSessionId', interviewId);
         sessionStorage.setItem(
           'jaasSession',
           JSON.stringify({
             domain: response.domain,
             room: response.room,
-            jwt: response.jwt,
-            sessionId,
+            jwt: response.jwt, 
+            interviewId,
           })
         );
 

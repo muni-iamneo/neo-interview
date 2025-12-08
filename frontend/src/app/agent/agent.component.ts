@@ -5,6 +5,7 @@ import { ConfigService } from '../services/config.service';
 import { JitsiService, JitsiTrackInfo } from '../services/jitsi.service';
 import { MediaRecordingService } from '../services/media-recording.service';
 import { SessionManagementService } from '../services/session-management.service';
+import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-agent',
@@ -19,7 +20,8 @@ export class AgentComponent implements OnInit, OnDestroy {
     private config: ConfigService,
     private jitsiService: JitsiService,
     private mediaRecording: MediaRecordingService,
-    public sessionManagement: SessionManagementService
+    public sessionManagement: SessionManagementService,
+    private authService: AuthService  // Inject AuthService
   ) {}
 
   private voiceWs: WebSocket | null = null;
@@ -246,7 +248,12 @@ export class AgentComponent implements OnInit, OnDestroy {
 
   // ================= WebSocket ===================
   private setupWebSockets(sessionId: string): void {
-    this.voiceWs = new WebSocket(this.config.getVoiceWebSocketUrl(sessionId));
+    // Use AuthService token for WebSocket as per requirements
+    const token = this.authService.getToken();
+    
+    // Construct URL with token (ConfigService handles token param if passed, but we pass it explicitly)
+    const url = this.config.getVoiceWebSocketUrl(sessionId, token);
+    this.voiceWs = new WebSocket(url);
 
     this.voiceWs.onopen = () => {
       console.log('✅ Voice WebSocket connected');

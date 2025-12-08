@@ -10,6 +10,6 @@ export const routes: Routes = [
   { path: 'moderator', component: ModeratorComponent },
   { path: 'agent', component: AgentComponent },
   { path: 'studio', component: AgentsStudioComponent },
-  { path: 'join/:sessionId', component: JoinComponent },
-  { path: 'monitor/:sessionId', component: MonitorComponent },
+  { path: 'join/:interviewId', component: JoinComponent },
+  { path: 'monitor/:interviewId', component: MonitorComponent },
 ];

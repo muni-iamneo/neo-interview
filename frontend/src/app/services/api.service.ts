@@ -6,13 +6,22 @@ import { ConfigService } from './config.service';
 
 export interface JWTRequest {
   room: string;
-  user: { name: string; [key: string]: any };
-  features?: { [key: string]: boolean };
-  ttlSec?: number;
-  // Legacy fields for backward compatibility
-  sessionId?: string;
+  user: {
+    name: string;
+    role?: 'participant' | 'moderator';
+    email?: string;
+    avatar?: string;
+  };
+  interviewId?: string; // New preferred field
+  sessionId?: string; // Deprecated
   rejoin?: boolean;
-  modTok?: string;
+  ttlSec?: number;
+  features?: {
+    transcription?: boolean;
+    recording?: boolean;
+    outbound_call?: boolean;
+  };
+  modTok?: string; // For moderator authentication
 }
 
 // New API response format (unwrapped by response interceptor)
@@ -33,43 +42,53 @@ export interface JWTResponse {
   rejoin?: boolean; // Optional flag indicating token reuse
 }
 
-export interface SessionStatus {
-  active: boolean;
-  ready?: boolean;
-  started?: boolean;
+export interface SessionResponse {
+  id: string;
+  agent_id: string;
+  status: string;
+  max_interview_minutes?: number;
+  start_time?: string; // ISO string
+  end_time?: string;
+  interview_start_time?: string;
+  end_reason?: string;
+  team_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  room_name?: string;
+  meeting_id?: string;
 }
 
-export interface SessionsOverview {
-  active_sessions: number;
-  timestamp: number;
+export interface SessionsListResponse {
+  sessions: SessionResponse[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface CreateAgentRequest {
   name: string;
-  role: string;
-  maxInterviewMinutes: number;
-  jobDescription: string;
+  role?: string;
   interviewType?: string;
   systemPrompt?: string;
-  voiceProvider?: string;
+  firstMessage?: string;
+  language?: string;
 }
 
 export interface UpdateAgentRequest {
   name?: string;
   role?: string;
-  maxInterviewMinutes?: number;
-  jobDescription?: string;
   interviewType?: string;
   systemPrompt?: string;
-  voiceProvider?: string;
+  firstMessage?: string;
+  language?: string;
 }
 
 export interface AgentResponse {
   id: string;
   name: string;
   role: string;
-  maxInterviewMinutes: number;
-  jobDescription: string;
+  maxInterviewMinutes?: number;
+  jobDescription?: string;
   interviewType: string;
   systemPrompt?: string;
   elevenAgentId?: string;
@@ -91,36 +110,47 @@ export interface ConfigureSessionResponse {
   message: string;
 }
 
+// Consolidated SessionInfo for frontend usage (camelCase)
 export interface SessionInfo {
   sessionId: string;
-  meetingId: string;
+  meetingId?: string;
   agentId: string;
   status: string;
   canRejoin: boolean;
   startTime?: number;
   endTime?: number;
-  lastActivity?: number;
   interviewStartTime?: number;
   maxInterviewMinutes?: number;
   endReason?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  roomName?: string;
 }
 
 export interface CreateLinkRequest {
   agentId: string;
   maxMinutes?: number;
   ttlMinutes?: number;
+  scheduledAt?: string;
+  jobDescription?: string;
+  resume?: string;
 }
 
 export interface CreateLinkResponse {
-  sessionId: string;
-  candidateUrl: string;
-  moderatorUrl: string;
-  meetingUrl: string;
+  interviewId: string;
   roomName: string;
   expiresAt: string;
-  candidateJwt?: string; // Pre-generated JWT for candidate (optional for backward compatibility)
+  scheduledAt?: string;
+  // URLs are now constructed on frontend or via join info endpoint
+}
+
+export interface LinkJoinInfo {
+  interviewId: string;
+  roomName: string;
+  meetingUrl: string;
+  status: string;
+  expiresAt: string;
+  maxInterviewMinutes: number;
 }
 
 export interface LinkInfo {
@@ -223,6 +253,7 @@ export class ApiService {
         ...(userRole && { role: userRole }),
         ...(userEmail && { email: userEmail })
       },
+      ...(request.interviewId && { interviewId: request.interviewId }),
       ...(request.sessionId && { sessionId: request.sessionId }),
       ...(request.rejoin && { rejoin: request.rejoin }),
       ...(ttlSeconds !== undefined && { ttl_seconds: ttlSeconds }),
@@ -297,9 +328,13 @@ export class ApiService {
    * Get all active voice sessions
    * Maps to: GET /v1/sessions
    */
-  getVoiceSessions(): Observable<SessionsOverview> {
-    return this.http.get<SessionsOverview>(
-      this.config.getApiUrl('/v1/sessions')
+  /**
+   * Get all active voice sessions
+   * Maps to: GET /v1/sessions
+   */
+  getVoiceSessions(page: number = 1, pageSize: number = 20): Observable<SessionsListResponse> {
+    return this.http.get<SessionsListResponse>(
+      this.config.getApiUrl(`/v1/sessions?page=${page}&page_size=${pageSize}`)
     );
   }
 
@@ -307,10 +342,35 @@ export class ApiService {
    * Get specific voice session status
    * Maps to: GET /v1/sessions/{id}
    */
-  getVoiceSessionStatus(sessionId: string): Observable<SessionStatus> {
-    return this.http.get<SessionStatus>(
+  getVoiceSessionStatus(sessionId: string): Observable<SessionInfo> {
+    return this.http.get<any>(
       this.config.getApiUrl(`/v1/sessions/${sessionId}`)
+    ).pipe(
+      map(response => {
+        // Handle potentially wrapped response
+        const data = (response && response.data) ? response.data : response;
+        return this.transformSessionResponse(data);
+      })
     );
+  }
+
+  private transformSessionResponse(data: any): SessionInfo {
+    return {
+      sessionId: data.id,
+      meetingId: data.meeting_id,
+      agentId: data.agent_id,
+      status: data.status,
+      // Logic for canRejoin based on status
+      canRejoin: (data.status === 'dropped' || data.status === 'paused'),
+      startTime: data.start_time ? new Date(data.start_time).getTime() : undefined,
+      endTime: data.end_time ? new Date(data.end_time).getTime() : undefined,
+      interviewStartTime: data.interview_start_time ? new Date(data.interview_start_time).getTime() : undefined,
+      maxInterviewMinutes: data.max_interview_minutes,
+      endReason: data.end_reason,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+      roomName: data.room_name
+    };
   }
 
   /**
@@ -325,9 +385,18 @@ export class ApiService {
    * Maps to: POST /v1/agents
    */
   createAgent(request: CreateAgentRequest): Observable<AgentResponse> {
+    const apiRequest: any = {
+      name: request.name,
+      role: request.role,
+      interview_type: request.interviewType,
+      system_prompt: request.systemPrompt,
+      first_message: request.firstMessage,
+      language: request.language
+    };
+
     return this.http.post<any>(
       this.config.getApiUrl('/v1/agents'),
-      request
+      apiRequest
     ).pipe(
       map((agent: any) => this.transformAgentResponse(agent))
     );
@@ -463,10 +532,12 @@ export class ApiService {
    * Get session information
    * Maps to: GET /v1/sessions/{id} (same endpoint as getVoiceSessionStatus)
    */
+  /**
+   * Get session information
+   * Maps to: GET /v1/sessions/{id}
+   */
   getSessionInfo(sessionId: string): Observable<SessionInfo> {
-    return this.http.get<SessionInfo>(
-      this.config.getApiUrl(`/v1/sessions/${sessionId}`)
-    );
+    return this.getVoiceSessionStatus(sessionId);
   }
 
   /**
@@ -493,7 +564,10 @@ export class ApiService {
     const apiRequest: any = {
       agent_id: request.agentId,
       max_minutes: request.maxMinutes,
-      ttl_minutes: request.ttlMinutes
+      ttl_minutes: request.ttlMinutes,
+      scheduled_at: request.scheduledAt,
+      job_description: request.jobDescription,
+      resume: request.resume
     };
     
     return this.http.post<any>(
@@ -501,7 +575,6 @@ export class ApiService {
       apiRequest
     ).pipe(
       // Response interceptor already unwraps {success, data, meta} → returns data
-      // Transform from snake_case to camelCase (handles both formats defensively)
       map((response: any) => {
         // Handle case where response might still be wrapped (if interceptor didn't catch it)
         let responseData = response;
@@ -510,38 +583,31 @@ export class ApiService {
         }
         
         return {
-          sessionId: responseData.session_id || responseData.sessionId,
-          candidateUrl: responseData.candidate_url || responseData.candidateUrl,
-          moderatorUrl: responseData.moderator_url || responseData.moderatorUrl,
-          meetingUrl: responseData.meeting_url || responseData.meetingUrl,
-          roomName: responseData.room_name || responseData.roomName,
-          expiresAt: responseData.expires_at || responseData.expiresAt,
-          candidateJwt: responseData.candidate_jwt || responseData.candidateJwt // Pre-generated JWT for candidate
+          interviewId: responseData.interviewId || responseData.interview_id,
+          roomName: responseData.roomName || responseData.room_name,
+          expiresAt: responseData.expiresAt || responseData.expires_at,
+          scheduledAt: responseData.scheduledAt || responseData.scheduled_at
         };
-      }),
-      catchError((error: any) => {
-        // If backend sends validation error but includes data in error response, try to extract it
-        if (error.error && typeof error.error === 'object') {
-          const errorBody = error.error;
-          
-          // Check if error has wrapped data structure
-          if (errorBody.success && errorBody.data && typeof errorBody.data === 'object') {
-            const responseData = errorBody.data;
-            // Extract and transform the data (backend validation failed but data exists)
-            return of({
-              sessionId: responseData.session_id || responseData.sessionId,
-              candidateUrl: responseData.candidate_url || responseData.candidateUrl,
-              moderatorUrl: responseData.moderator_url || responseData.moderatorUrl,
-              meetingUrl: responseData.meeting_url || responseData.meetingUrl,
-              roomName: responseData.room_name || responseData.roomName,
-              expiresAt: responseData.expires_at || responseData.expiresAt
-            });
-          }
-        }
-        
-        // Re-throw original error
-        return throwError(() => error);
       })
+    );
+  }
+
+  /**
+   * Get link join info (simplified info for landing page)
+   * Maps to: GET /v1/links/{interview_id}/join
+   */
+  getLinkJoinInfo(interviewId: string): Observable<LinkJoinInfo> {
+    return this.http.get<any>(
+      this.config.getApiUrl(`/v1/links/${interviewId}/join`)
+    ).pipe(
+      map(data => ({
+        interviewId: data.interviewId,
+        roomName: data.roomName,
+        meetingUrl: data.meetingUrl,
+        status: data.status,
+        expiresAt: data.expiresAt,
+        maxInterviewMinutes: data.maxInterviewMinutes
+      }))
     );
   }
 

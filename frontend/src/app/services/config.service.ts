@@ -54,9 +54,9 @@ export class ConfigService {
    * Get WebSocket URL for voice connection
    * New format: ws://localhost:8000/v1/ws/voice/{sessionId}?token={JWT}
    */
-  getVoiceWebSocketUrl(sessionId: string): string {
-    const token = this.authService.getToken();
-    return `${this.WS_BASE_URL}/v1/ws/voice/${sessionId}?token=${encodeURIComponent(token)}`;
+  getVoiceWebSocketUrl(sessionId: string, token?: string): string {
+    const authToken = token || this.authService.getToken();
+    return `${this.WS_BASE_URL}/v1/ws/voice/${sessionId}?token=${encodeURIComponent(authToken)}`;
   }
 
   /**

@@ -33,13 +33,22 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   agentLinks = signal<LinkWithAgent[]>([]);
   showCreateModal = signal(false);
   showLinkModal = signal(false);
-  createdLink = signal<CreateLinkResponse | null>(null);
   loading = signal(false);
   error = signal<string | null>(null);
 
-  // Form fields for create link
+  // Form fields
+  // Created link data
+  createdLink = signal<any | null>(null);
+  
+  // Computed URLs for display
+  candidateJoinUrl = signal<string>('');
+  moderatorJoinUrl = signal<string>('');
   maxMinutes = signal<number | null>(null);
   ttlMinutes = signal<number | null>(null);
+  linkJobDescription = signal<string>('');
+  widthParams = signal<string>(''); // Not saving resume for now? Wait, API needs it.
+  linkResume = signal<string>('');
+  scheduledAt = signal<string>('');
 
   // Tabs state
   activeTab = signal<'links' | 'details' | 'conversations'>('details');
@@ -64,10 +73,10 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   agentForm = {
     name: '',
     role: '',
-    maxInterviewMinutes: 30,
-    jobDescription: '',
     interviewType: 'technical',
     systemPrompt: '',
+    firstMessage: '',
+    language: 'en',
     voiceProvider: 'neo'  // Default to Neo (custom pipeline)
   };
 
@@ -216,6 +225,9 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.showCreateModal.set(false);
     this.maxMinutes.set(null);
     this.ttlMinutes.set(null);
+    this.linkJobDescription.set('');
+    this.linkResume.set('');
+    this.scheduledAt.set('');
   }
 
   closeLinkModal() {
@@ -234,17 +246,28 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
       agentId: agent.id,
       maxMinutes: this.maxMinutes() || undefined,
       ttlMinutes: this.ttlMinutes() || undefined,
+      jobDescription: this.linkJobDescription() || undefined,
+      resume: this.linkResume() || undefined,
+      scheduledAt: this.scheduledAt() || undefined
     };
 
     this.apiService.createLink(request).subscribe({
       next: (response) => {
-        this.createdLink.set(response);
-        this.showCreateModal.set(false);
-        this.showLinkModal.set(true);
         this.loading.set(false);
-
-        // Reload links for this agent
-        this.loadAgentLinks(agent.id);
+        this.closeCreateModal();
+        
+        // Manually construct URLs based on interviewId
+        const baseUrl = window.location.origin;
+        const interviewId = response.interviewId;
+        
+        this.candidateJoinUrl.set(`${baseUrl}/join/${interviewId}`);
+        this.moderatorJoinUrl.set(`${baseUrl}/moderator/session/${interviewId}`);
+        
+        // Store just the raw response for other metadata
+        this.createdLink.set(response);
+        
+        this.showLinkModal.set(true);
+        this.loadAgentLinks(agent.id); // Refresh links
       },
       error: (err) => {
         console.error('Error creating link:', err);
@@ -398,7 +421,7 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
         error: () => {
           this.apiService.getVoiceSessionStatus(sessionId).subscribe({
             next: (status) => {
-              if (status.active) {
+              if (status.status === 'active') {
                 console.log('✅ Voice session active');
               }
             },
@@ -452,10 +475,10 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
       this.agentForm = {
         name: '',
         role: '',
-        maxInterviewMinutes: 30,
-        jobDescription: '',
         interviewType: 'technical',
         systemPrompt: '',
+        firstMessage: '',
+        language: 'en',
         voiceProvider: 'neo'  // Reset to default
       };
     }
@@ -464,25 +487,22 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   createAgent(): void {
     this.error.set(null);
 
-    if (!this.agentForm.name || !this.agentForm.role || !this.agentForm.jobDescription) {
+    if (!this.agentForm.name || !this.agentForm.role) {
       this.error.set('Please fill in all required fields');
       return;
     }
 
-    if (this.agentForm.maxInterviewMinutes < 5 || this.agentForm.maxInterviewMinutes > 180) {
-      this.error.set('Interview duration must be between 5 and 180 minutes');
-      return;
-    }
+
 
     this.isCreatingAgent.set(true);
 
     const request = {
       name: this.agentForm.name,
       role: this.agentForm.role,
-      maxInterviewMinutes: this.agentForm.maxInterviewMinutes,
-      jobDescription: this.agentForm.jobDescription,
       interviewType: this.agentForm.interviewType,
       systemPrompt: this.agentForm.systemPrompt || undefined,
+      firstMessage: this.agentForm.firstMessage || undefined,
+      language: this.agentForm.language,
       voiceProvider: this.agentForm.voiceProvider
     };
 

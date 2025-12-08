@@ -11,7 +11,7 @@ import { ApiService, JWTRequest } from '../services/api.service';
   styleUrls: ['./monitor.component.css'],
 })
 export class MonitorComponent implements OnInit {
-  sessionId = signal<string>('');
+  interviewId = signal<string>('');
   modTok = signal<string>('');
   loading = signal(false);
   error = signal<string | null>(null);
@@ -24,11 +24,11 @@ export class MonitorComponent implements OnInit {
   ) {}
 
   ngOnInit() {
-    // Extract session ID and moderator token from route
+    // Extract interview ID and moderator token from route
     this.route.params.subscribe((params) => {
-      const id = params['sessionId'];
+      const id = params['interviewId'];
       if (id) {
-        this.sessionId.set(id);
+        this.interviewId.set(id);
       }
     });
 
@@ -40,7 +40,7 @@ export class MonitorComponent implements OnInit {
     });
 
     // Validate we have both
-    if (!this.sessionId() || !this.modTok()) {
+    if (!this.interviewId() || !this.modTok()) {
       this.error.set('Invalid monitoring link');
       return;
     }
@@ -53,7 +53,7 @@ export class MonitorComponent implements OnInit {
     this.loading.set(true);
     this.error.set(null);
 
-    this.apiService.getLink(this.sessionId()).subscribe({
+    this.apiService.getLink(this.interviewId()).subscribe({
       next: (link) => {
         this.linkInfo.set(link);
         this.loading.set(false);
@@ -68,10 +68,10 @@ export class MonitorComponent implements OnInit {
   }
 
   joinAsMonitor() {
-    const sessionId = this.sessionId();
+    const interviewId = this.interviewId();
     const modTok = this.modTok();
 
-    if (!sessionId || !modTok) {
+    if (!interviewId || !modTok) {
       this.error.set('Invalid monitoring credentials');
       return;
     }
@@ -80,7 +80,7 @@ export class MonitorComponent implements OnInit {
     this.error.set(null);
 
     // Generate room name
-    const room = `interview-${sessionId.substring(0, 8)}`;
+    const room = `interview-${interviewId.substring(0, 8)}`;
 
     // Mint JWT with moderator token
     const jwtRequest: JWTRequest = {
@@ -92,26 +92,21 @@ export class MonitorComponent implements OnInit {
       features: {
         transcription: true,
       },
+      interviewId,
+      modTok
     };
 
-    // Add sessionId and modTok to request
-    const requestBody = {
-      ...jwtRequest,
-      sessionId,
-      modTok,
-    };
-
-    this.apiService.mintJWT(requestBody as any).subscribe({
+    this.apiService.mintJWT(jwtRequest).subscribe({
       next: (response) => {
         // Store session data in sessionStorage
-        sessionStorage.setItem('currentSessionId', sessionId);
+        sessionStorage.setItem('currentSessionId', interviewId);
         sessionStorage.setItem(
           'jaasSession',
           JSON.stringify({
             domain: response.domain,
             room: response.room,
             jwt: response.jwt,
-            sessionId,
+            interviewId,
             isModerator: true,
           })
         );
