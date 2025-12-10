@@ -120,33 +120,19 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     this.interviewSettings.meetingDuration = agent.maxInterviewMinutes || 30;
     console.log('Selected agent:', agent.name);
     // Load session history when agent is selected
-    if (this.activeTab() === 'history') {
-      this.loadAgentHistory(agent.id);
-    }
+
   }
   
   setActiveTab(tab: 'overview' | 'setup' | 'configuration' | 'history'): void {
     this.activeTab.set(tab);
     // Load history when switching to history tab
-    if (tab === 'history' && this.selectedAgent()) {
-      this.loadAgentHistory(this.selectedAgent()!.id);
-    }
+
   }
   
   loadAgentHistory(agentId: string): void {
-    this.isLoadingHistory.set(true);
-    this.apiService.getAgentSessionHistory(agentId).subscribe({
-      next: (response) => {
-        this.agentSessionHistory.set(response.sessions);
-        this.isLoadingHistory.set(false);
-        console.log(`✅ Loaded ${response.totalCount} sessions for agent`);
-      },
-      error: (err) => {
-        console.error('❌ Failed to load agent history', err);
-        this.isLoadingHistory.set(false);
-        this.agentSessionHistory.set([]);
-      }
-    });
+    // History endpoint deprecated
+    this.isLoadingHistory.set(false);
+    this.agentSessionHistory.set([]);
   }
 
   toggleCreateForm(): void {
@@ -215,69 +201,57 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     // Generate UUID for the session ID
     const sessionId = crypto.randomUUID();
     
-    // First, configure the session with the selected agent
-    this.apiService.configureSession(sessionId, {
-      agentId: agent.id,
-      dynamicVariables: {
+    // Calculate JWT TTL: interview duration + 5 minutes buffer (all in seconds)
+    const interviewDurationMinutes = this.interviewSettings.meetingDuration;
+    const bufferMinutes = 5;
+    const jwtTtlSeconds = (interviewDurationMinutes + bufferMinutes) * 60;
+    
+    // Build JWT request directly with agentId and dynamic variables
+    const request: JWTRequest = {
+      room: sessionId,  // Use sessionId as room ID for consistent rejoin
+      user: { name: 'Moderator', role: 'moderator' },
+      ttlSec: jwtTtlSeconds,
+      sessionId: sessionId,
+      agentId: agent.id, // Pass agent ID for ad-hoc session
+      dynamic_variables: {
         user_name: this.interviewSettings.userName,
         meeting_duration: this.interviewSettings.meetingDuration.toString(),
         job_description: agent.jobDescription || '',
         role: agent.role
       }
-    }).subscribe({
-      next: (configRes) => {
-        console.log('✅ Session configured:', configRes);
-        
-        // Calculate JWT TTL: interview duration + 5 minutes buffer (all in seconds)
-        const interviewDurationMinutes = this.interviewSettings.meetingDuration;
-        const bufferMinutes = 5;
-        const jwtTtlSeconds = (interviewDurationMinutes + bufferMinutes) * 60;
-        
-        // Use sessionId as the room ID so rejoining uses the same meeting room
-        // Now mint JWT and start the session
-        const request: JWTRequest = {
-          room: sessionId,  // Use sessionId as room ID for consistent rejoin
-          user: { name: 'Moderator', role: 'moderator' },
-          ttlSec: jwtTtlSeconds,  // Set TTL based on interview duration + buffer
-          sessionId: sessionId  // Pass sessionId for tracking
-        } as any;
+    };
 
-        this.apiService.mintJWT(request).subscribe({
-          next: (res) => {
-            try {
-              // Store JaaS session data with sessionId
-              const sessionData = {
-                ...res,
-                sessionId: sessionId  // Include sessionId in stored data
-              };
-              sessionStorage.setItem('jaasSession', JSON.stringify(sessionData));
-              sessionStorage.setItem('currentSessionId', sessionId); // Also store separately for easy access
-              console.log('✅ JaaS session created and saved with sessionId:', sessionId);
-            } catch (error) {
-              console.error('❌ Failed to save JaaS session', error);
-              return;
-            }
-            
-            this.agentResponses.update(t => 
-              t + `[Info] Starting interview with agent "${agent.name}"\n` +
-              `[Info] Duration: ${this.interviewSettings.meetingDuration} minutes\n`
-            );
-            
-            // Open agent page in new tab
-            window.open('/agent', '_blank');
-            
-            // Monitor voice session status
-            this.monitorVoiceSession();
-          },
-          error: (err) => {
-            console.error('❌ JWT minting failed', err);
-            this.agentResponses.set('[Error] Failed to create session\n');
-          }
-        });
+    this.apiService.mintJWT(request).subscribe({
+      next: (res) => {
+        try {
+          // Store JaaS session data with sessionId
+          const sessionData = {
+            ...res,
+            sessionId: sessionId  // Include sessionId in stored data
+          };
+          sessionStorage.setItem('jaasSession', JSON.stringify(sessionData));
+          sessionStorage.setItem('currentSessionId', sessionId); // Also store separately for easy access
+          console.log('✅ JaaS session created and saved with sessionId:', sessionId);
+        } catch (error) {
+          console.error('❌ Failed to save JaaS session', error);
+          return;
+        }
+        
+        this.agentResponses.update(t => 
+          t + `[Info] Starting interview with agent "${agent.name}"\n` +
+          `[Info] Duration: ${this.interviewSettings.meetingDuration} minutes\n`
+        );
+        
+        // Open agent page in new tab
+        window.open('/agent', '_blank');
+        
+        // Monitor voice session status
+        this.monitorVoiceSession();
       },
       error: (err) => {
-        console.error('❌ Session configuration failed', err);
-        this.formError.set(err.error?.detail || 'Failed to configure session. Please try again.');
+        console.error('❌ Session creation failed', err);
+        this.formError.set(err.error?.detail || 'Failed to create session. Please try again.');
+        this.agentResponses.set('[Error] Failed to create session\n');
       }
     });
   }
@@ -422,14 +396,24 @@ export class ModeratorComponent implements OnInit, OnDestroy {
       this.showToast('No active session found', 'error');
       return;
     }
-    try {
-      await this.apiService.resumeSession(sessionId).toPromise();
-      this.showToast('Session resumed successfully', 'success');
-      // Refresh session info
-      this.monitorVoiceSession();
-    } catch (err: any) {
-      this.showToast(`Failed to resume session: ${err.message || 'Unknown error'}`, 'error');
-    }
+    
+    const request: JWTRequest = {
+      room: sessionId,
+      sessionId: sessionId,
+      rejoin: true,
+      user: { name: 'Moderator', role: 'moderator' }
+    };
+
+    // Use mintJWT instead of deprecated resumeSession
+    this.apiService.mintJWT(request).subscribe({
+      next: (res) => {
+        this.showToast('Session resumed successfully', 'success');
+        this.monitorVoiceSession();
+      },
+      error: (err) => {
+        this.showToast(`Failed to resume session: ${err.message || 'Unknown error'}`, 'error');
+      }
+    });
   }
 
   navigateToStudio(): void {

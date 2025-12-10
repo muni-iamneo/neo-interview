@@ -144,9 +144,10 @@ export class AgentComponent implements OnInit, OnDestroy {
       
       // Close WebSocket to end session
       if (this.voiceWs) {
-        this.voiceWs.close(1000, 'Participant left');
-        this.voiceWs = null;
-        this.wsStarted = false;
+        // this.voiceWs.close(1000, 'Participant left');
+        // this.voiceWs = null;
+        // this.wsStarted = false;
+        console.log('socket open');
       }
 
       this.jitsiService.startPollingForTrack();
@@ -251,8 +252,12 @@ export class AgentComponent implements OnInit, OnDestroy {
     // Use AuthService token for WebSocket as per requirements
     const token = this.authService.getToken();
     
-    // Construct URL with token (ConfigService handles token param if passed, but we pass it explicitly)
+    // Construct URL with token (ConfigService handles token param)
     const url = this.config.getVoiceWebSocketUrl(sessionId, token);
+
+    // Pass teamId as a subprotocol to simulate header (standard browser WS workaround)
+    // const teamId = this.authService.getTeamId();
+    // this.voiceWs = new WebSocket(url, ['xmpp', teamId]);
     this.voiceWs = new WebSocket(url);
 
     this.voiceWs.onopen = () => {

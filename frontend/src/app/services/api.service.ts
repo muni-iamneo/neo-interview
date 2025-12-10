@@ -12,6 +12,7 @@ export interface JWTRequest {
     email?: string;
     avatar?: string;
   };
+  agentId?: string; // For ad-hoc sessions
   interviewId?: string; // New preferred field
   sessionId?: string; // Deprecated
   rejoin?: boolean;
@@ -22,95 +23,18 @@ export interface JWTRequest {
     outbound_call?: boolean;
   };
   modTok?: string; // For moderator authentication
+  job_description?: string;
+  resume?: string;
+  dynamic_variables?: { [key: string]: string };
 }
 
-// New API response format (unwrapped by response interceptor)
-export interface JWTResponseData {
-  token: string;
-  room: string;
-  domain: string;
-  expires_at?: number;
-  ttl_seconds?: number;
-  rejoin?: boolean; // Indicates if token was reused from existing session
-}
-
-// Frontend-compatible response format
 export interface JWTResponse {
   domain: string;
   room: string;
   jwt: string;
-  rejoin?: boolean; // Optional flag indicating token reuse
+  rejoin?: boolean;
 }
 
-export interface SessionResponse {
-  id: string;
-  agent_id: string;
-  status: string;
-  max_interview_minutes?: number;
-  start_time?: string; // ISO string
-  end_time?: string;
-  interview_start_time?: string;
-  end_reason?: string;
-  team_id?: string;
-  created_at?: string;
-  updated_at?: string;
-  room_name?: string;
-  meeting_id?: string;
-}
-
-export interface SessionsListResponse {
-  sessions: SessionResponse[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-export interface CreateAgentRequest {
-  name: string;
-  role?: string;
-  interviewType?: string;
-  systemPrompt?: string;
-  firstMessage?: string;
-  language?: string;
-}
-
-export interface UpdateAgentRequest {
-  name?: string;
-  role?: string;
-  interviewType?: string;
-  systemPrompt?: string;
-  firstMessage?: string;
-  language?: string;
-}
-
-export interface AgentResponse {
-  id: string;
-  name: string;
-  role: string;
-  maxInterviewMinutes?: number;
-  jobDescription?: string;
-  interviewType: string;
-  systemPrompt?: string;
-  elevenAgentId?: string;
-  voiceProvider?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ConfigureSessionRequest {
-  agentId?: string;
-  elevenAgentId?: string;
-  dynamicVariables?: { [key: string]: string };
-}
-
-export interface ConfigureSessionResponse {
-  success: boolean;
-  sessionId: string;
-  elevenAgentId: string;
-  message: string;
-}
-
-// Consolidated SessionInfo for frontend usage (camelCase)
 export interface SessionInfo {
   sessionId: string;
   meetingId?: string;
@@ -127,6 +51,47 @@ export interface SessionInfo {
   roomName?: string;
 }
 
+export interface SessionsListResponse {
+  items: SessionInfo[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface CreateAgentRequest {
+  name: string;
+  role: string;
+  interviewType: string;
+  systemPrompt?: string;
+  firstMessage?: string;
+  language: string;
+}
+
+export interface AgentResponse {
+  id: string;
+  name: string;
+  role: string;
+  maxInterviewMinutes?: number;
+  jobDescription?: string;
+  interviewType: string;
+  systemPrompt?: string;
+  elevenAgentId?: string;
+  voiceProvider?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface UpdateAgentRequest {
+  name?: string;
+  role?: string;
+  interviewType?: string;
+  systemPrompt?: string;
+  firstMessage?: string;
+  language?: string;
+  voiceProvider?: string;
+  elevenAgentId?: string;
+}
+
 export interface CreateLinkRequest {
   agentId: string;
   maxMinutes?: number;
@@ -141,13 +106,12 @@ export interface CreateLinkResponse {
   roomName: string;
   expiresAt: string;
   scheduledAt?: string;
-  // URLs are now constructed on frontend or via join info endpoint
 }
 
 export interface LinkJoinInfo {
   interviewId: string;
   roomName: string;
-  meetingUrl: string;
+  meetingUrl?: string;
   status: string;
   expiresAt: string;
   maxInterviewMinutes: number;
@@ -158,55 +122,33 @@ export interface LinkInfo {
   agent_id: string;
   status: string;
   created_at: string;
-  expires_at?: string;
-  started_at?: number;
-  ended_at?: number;
+  expires_at: string;
+  started_at?: string;
+  ended_at?: string;
   meeting_url?: string;
   room_name?: string;
 }
 
-export interface ConversationInfo {
-  conversation_id: string;
-  agent_id: string;
-  start_time: string;
-  call_duration_secs: number;
-  status: string;
-}
-
-export interface TranscriptSegment {
-  role: string;
-  message: string;
-  timestamp?: number;
-}
-
 export interface ConversationDetails {
-  conversation_id: string;
-  agent_id: string;
-  transcript: TranscriptSegment[];
-  formatted_transcript: string;
-  metadata: { [key: string]: any };
-}
-
-export interface AnalysisResult {
-  conversation_id: string;
-  agent_id?: string;
-  analysis: {
-    hiring_recommendation: 'hire' | 'no-hire' | 'consider';
-    subject_knowledge: { [subject: string]: string };
-    reasoning: string;
-    strengths: string[];
-    concerns: string[];
-  };
-  generated_at: string;
+  id: string;
+  agentId: string;
+  status: string;
+  startTime: string;
+  endTime?: string;
+  transcript?: any[];
 }
 
 export interface ConversationsListResponse {
-  conversations: ConversationInfo[];
-  next_cursor: string | null;
+  conversations: ConversationDetails[];
+  nextCursor?: string;
 }
 
-export interface AnalyzeRequest {
-  force_regenerate?: boolean;
+export interface AnalysisResult {
+  id: string;
+  conversationId: string;
+  summary: string;
+  score?: number;
+  feedback?: string;
 }
 
 @Injectable({
@@ -216,11 +158,9 @@ export class ApiService {
   constructor(
     private http: HttpClient,
     private config: ConfigService
-  ) {}
-
-  /**
+  ) {}  /**
    * Mint a JaaS JWT token
-   * Maps to: POST /v1/jaas/jwt
+   * Maps to: POST /v1/sessions/join
    * Transforms request/response to match microservice API specification
    * 
    * Features:
@@ -230,11 +170,7 @@ export class ApiService {
    */
   mintJWT(request: JWTRequest): Observable<JWTResponse> {
     // Transform request to match microservice API format
-    // Microservice API: POST /v1/jaas/jwt
-    // Validation: room (1-200 chars), user_name (1-100 chars), ttl_seconds (60-86400)
-    
-    const userRole = request.user['role'] || 'participant';
-    const userEmail = request.user['email'] || null; // Send null instead of empty string for optional field
+    // Microservice API: POST /v1/sessions/join
     
     // Validate and clamp ttl_seconds to backend limits (60-86400)
     // Only include ttl_seconds if explicitly provided (optional field)
@@ -248,22 +184,21 @@ export class ApiService {
     // Build request body matching microservice spec
     const apiRequest: any = {
       room: request.room,
-      user: {
-        name: request.user.name,
-        ...(userRole && { role: userRole }),
-        ...(userEmail && { email: userEmail })
-      },
+      user: request.user, // Pass user object directly
       ...(request.interviewId && { interviewId: request.interviewId }),
       ...(request.sessionId && { sessionId: request.sessionId }),
       ...(request.rejoin && { rejoin: request.rejoin }),
-      ...(ttlSeconds !== undefined && { ttl_seconds: ttlSeconds }),
-      ...(request.features && { features: request.features }),
-      ...(request.modTok && { modTok: request.modTok })
+      ...(ttlSeconds !== undefined && { ttlSec: ttlSeconds }), // Note: backend expects ttlSec, not ttl_seconds for /join
+      ...(request.modTok && { modTok: request.modTok }),
+      job_description: "Senior Backend Engineer position...",
+      resume: "https://storage.googleapis.com/neohire-prod-private-bucket/d6a5e1aa-c68e-45fe-ba36-dc6b4557e961/resume_cv/KAVIYASRIV1_1763987562696_cl5Omp.pdf?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=hire-infra-svc%40neohire-prod.iam.gserviceaccount.com%2F20251209%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251209T132245Z&X-Goog-Expires=300&X-Goog-SignedHeaders=host&X-Goog-Signature=2004e7ae25f94a3e8666fbea64f1a968e5781423d88d79d9a9447d5ab91cc8dfa50e0e175acadbb881f613493a2ffb8374a7278f8b510f7f210ad910991e60b97a72066e4d7a7488cbd15297e29e7e31db5f74d58710eb639ee790cd46279cdbc480598f706379b1bc06892743d2a87304bcb6f1fbe124bb61610df47d70aaf48a104bf7628afc1eb32730e22d9cbb50ea96785f749205b49fc34becf44ab7692e873af7b6b616c5c04a5902d8f72108e8c5a6e537718fdfee765fc3ee1b31d4d4cbf27b186b5a98d3a2e4e4991a1d020b68e5115236c1574552cd90abd11e1057fa510cc02300c10518b78188ad9cfbf10e25a0c27c3d3ad42d12fb6a2a31c3",
+      ...(request.agentId && { agent_id: request.agentId }),
+      ...(request.dynamic_variables && { dynamic_variables: request.dynamic_variables })
     };
 
     // Make API call (response interceptor will unwrap {success, data, meta})
-    return this.http.post<JWTResponseData>(
-      this.config.getApiUrl('/v1/jaas/jwt'),
+    return this.http.post<any>(
+      this.config.getApiUrl('/v1/sessions/join'),
       apiRequest
     ).pipe(
       // Transform response to match frontend expectations
@@ -498,60 +433,17 @@ export class ApiService {
     );
   }
 
-  /**
-   * Configure a voice session with agent and dynamic variables
-   * Maps to: POST /v1/sessions/{id}/configure
-   * Transforms camelCase to snake_case for microservice API
-   */
-  configureSession(sessionId: string, request: ConfigureSessionRequest): Observable<ConfigureSessionResponse> {
-    // Transform request from camelCase to snake_case for microservice
-    const apiRequest: any = {
-      agent_id: request.agentId,
-      eleven_agent_id: request.elevenAgentId,
-      dynamic_variables: request.dynamicVariables || {}
-    };
-    
-    return this.http.post<ConfigureSessionResponse>(
-      this.config.getApiUrl(`/v1/sessions/${sessionId}/configure`),
-      apiRequest
-    );
-  }
 
-  /**
-   * Resume a dropped/paused session
-   * Maps to: POST /v1/sessions/{id}/resume
-   */
-  resumeSession(sessionId: string): Observable<any> {
-    return this.http.post<any>(
-      this.config.getApiUrl(`/v1/sessions/${sessionId}/resume`),
-      {}
-    );
-  }
 
   /**
    * Get session information
    * Maps to: GET /v1/sessions/{id} (same endpoint as getVoiceSessionStatus)
    */
-  /**
-   * Get session information
-   * Maps to: GET /v1/sessions/{id}
-   */
   getSessionInfo(sessionId: string): Observable<SessionInfo> {
     return this.getVoiceSessionStatus(sessionId);
   }
 
-  /**
-   * Get session history for an agent
-   * NOTE: This endpoint is not available in microservice. 
-   * Use getVoiceSessions() and filter by agent_id on the client side.
-   * @deprecated Use getVoiceSessions() and filter client-side
-   */
-  getAgentSessionHistory(agentId: string): Observable<{ agentId: string; sessions: SessionInfo[]; totalCount: number }> {
-    // Fallback: return empty result since endpoint doesn't exist
-    return this.http.get<{ agentId: string; sessions: SessionInfo[]; totalCount: number }>(
-      this.config.getApiUrl(`/v1/sessions?agent_id=${agentId}`)
-    );
-  }
+
 
   /**
    * Create a new interview link
@@ -563,11 +455,8 @@ export class ApiService {
     // Transform request from camelCase to snake_case for microservice
     const apiRequest: any = {
       agent_id: request.agentId,
-      max_minutes: request.maxMinutes,
-      ttl_minutes: request.ttlMinutes,
-      scheduled_at: request.scheduledAt,
-      job_description: request.jobDescription,
-      resume: request.resume
+      max_interview_minutes: request.maxMinutes,
+      ttl_minutes: request.ttlMinutes
     };
     
     return this.http.post<any>(
@@ -583,7 +472,7 @@ export class ApiService {
         }
         
         return {
-          interviewId: responseData.interviewId || responseData.interview_id,
+          interviewId: responseData.sessionId || responseData.interviewId || responseData.interview_id,
           roomName: responseData.roomName || responseData.room_name,
           expiresAt: responseData.expiresAt || responseData.expires_at,
           scheduledAt: responseData.scheduledAt || responseData.scheduled_at
@@ -664,49 +553,5 @@ export class ApiService {
     );
   }
 
-  /**
-   * List conversations for an agent (with pagination)
-   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
-   * @deprecated Endpoint not available in microservice
-   */
-  listAgentConversations(agentId: string, cursor?: string, pageSize: number = 30): Observable<ConversationsListResponse> {
-    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
-  }
-
-  /**
-   * Get conversation details with transcript
-   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
-   * @deprecated Endpoint not available in microservice
-   */
-  getConversationDetails(conversationId: string): Observable<ConversationDetails> {
-    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
-  }
-
-  /**
-   * Generate AI analysis for a conversation
-   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
-   * @deprecated Endpoint not available in microservice
-   */
-  generateAnalysis(conversationId: string, forceRegenerate: boolean = false): Observable<AnalysisResult> {
-    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
-  }
-
-  /**
-   * Get stored analysis for a conversation
-   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
-   * @deprecated Endpoint not available in microservice
-   */
-  getAnalysis(conversationId: string): Observable<AnalysisResult> {
-    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
-  }
-
-  /**
-   * Delete stored analysis
-   * NOTE: This endpoint is not available in microservice (non-critical studio feature)
-   * @deprecated Endpoint not available in microservice
-   */
-  deleteAnalysis(conversationId: string): Observable<void> {
-    throw new Error('Conversations endpoint not available in microservice. This is a non-critical studio feature.');
-  }
 }
 

@@ -9,9 +9,6 @@ import {
   CreateLinkRequest,
   CreateLinkResponse,
   SessionInfo,
-  ConversationInfo,
-  ConversationDetails,
-  AnalysisResult,
 } from '../services/api.service';
 import { ToastService } from '../services/toast.service';
 import { ToastComponent } from '../components/toast/toast.component';
@@ -45,10 +42,6 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   moderatorJoinUrl = signal<string>('');
   maxMinutes = signal<number | null>(null);
   ttlMinutes = signal<number | null>(null);
-  linkJobDescription = signal<string>('');
-  widthParams = signal<string>(''); // Not saving resume for now? Wait, API needs it.
-  linkResume = signal<string>('');
-  scheduledAt = signal<string>('');
 
   // Tabs state
   activeTab = signal<'links' | 'details' | 'conversations'>('details');
@@ -99,10 +92,10 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   ];
 
   // Conversations state
-  conversations = signal<ConversationInfo[]>([]);
-  selectedConversation = signal<ConversationInfo | null>(null);
-  conversationDetails = signal<ConversationDetails | null>(null);
-  conversationAnalysis = signal<AnalysisResult | null>(null);
+  conversations = signal<any[]>([]);
+  selectedConversation = signal<any | null>(null);
+  conversationDetails = signal<any | null>(null);
+  conversationAnalysis = signal<any | null>(null);
   isLoadingConversations = signal<boolean>(false);
   isLoadingAnalysis = signal<boolean>(false);
   conversationsCursor = signal<string | null>(null);
@@ -225,9 +218,7 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.showCreateModal.set(false);
     this.maxMinutes.set(null);
     this.ttlMinutes.set(null);
-    this.linkJobDescription.set('');
-    this.linkResume.set('');
-    this.scheduledAt.set('');
+    this.ttlMinutes.set(null);
   }
 
   closeLinkModal() {
@@ -245,10 +236,7 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     const request: CreateLinkRequest = {
       agentId: agent.id,
       maxMinutes: this.maxMinutes() || undefined,
-      ttlMinutes: this.ttlMinutes() || undefined,
-      jobDescription: this.linkJobDescription() || undefined,
-      resume: this.linkResume() || undefined,
-      scheduledAt: this.scheduledAt() || undefined
+      ttlMinutes: this.ttlMinutes() || undefined
     };
 
     this.apiService.createLink(request).subscribe({
@@ -387,19 +375,9 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
 
   // Load agent session history
   loadAgentHistory(agentId: string): void {
-    this.isLoadingHistory.set(true);
-    this.apiService.getAgentSessionHistory(agentId).subscribe({
-      next: (response) => {
-        this.agentSessionHistory.set(response.sessions);
-        this.isLoadingHistory.set(false);
-        console.log(`✅ Loaded ${response.totalCount} sessions for agent`);
-      },
-      error: (err) => {
-        console.error('❌ Failed to load agent history', err);
-        this.isLoadingHistory.set(false);
-        this.agentSessionHistory.set([]);
-      }
-    });
+    // Feature deprecated
+    this.agentSessionHistory.set([]);
+    this.isLoadingHistory.set(false);
   }
 
   // Monitor voice session status
@@ -457,13 +435,23 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
       this.toastService.warning('No active session found');
       return;
     }
-    try {
-      await this.apiService.resumeSession(sessionId).toPromise();
-      this.toastService.success('Session resumed successfully');
-      this.monitorVoiceSession();
-    } catch (err: any) {
-      this.toastService.error(`Failed to resume session: ${err.message || 'Unknown error'}`);
-    }
+    
+    const request = {
+      room: sessionId,
+      sessionId: sessionId,
+      rejoin: true,
+      user: { name: 'Moderator' }
+    };
+
+    this.apiService.mintJWT(request as any).subscribe({
+      next: (res) => {
+        this.toastService.success('Session resumed successfully');
+        this.monitorVoiceSession();
+      },
+      error: (err) => {
+        this.toastService.error(`Failed to resume session: ${err.message || 'Unknown error'}`);
+      }
+    });
   }
 
   // Agent Management Methods
@@ -604,41 +592,9 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
       this.cursorHistory.set([null]); // Initialize with null for page 1
     }
 
-    this.apiService.listAgentConversations(agentId, cursor || undefined, this.pageSize()).subscribe({
-      next: (response) => {
-        // Ensure we only show the conversations returned (respecting page size)
-        const conversationsToShow = response.conversations.slice(0, this.pageSize());
-        this.conversations.set(conversationsToShow);
-        this.conversationsCursor.set(response.next_cursor);
-        this.hasNextPage.set(!!response.next_cursor);
-        
-        // Update current page and pagination state
-        const newPage = page;
-        this.currentPage.set(newPage);
-        this.hasPrevPage.set(newPage > 1);
-        
-        // Update cursor history
-        // history[i] represents the cursor needed to load page i+1
-        // history[0] = null (for page 1)
-        // history[1] = cursor1 (to get page 2)
-        // history[2] = cursor2 (to get page 3), etc.
-        const history = this.cursorHistory();
-        if (newPage === history.length) {
-          // We loaded a new page - store the next cursor for future navigation
-          // Only add if we have a next cursor (more pages available)
-          if (response.next_cursor) {
-            this.cursorHistory.set([...history, response.next_cursor]);
-          }
-        }
-        
-        this.isLoadingConversations.set(false);
-      },
-      error: (err) => {
-        console.error('Error loading conversations:', err);
-        this.error.set(err.error?.detail || 'Failed to load conversations');
-        this.isLoadingConversations.set(false);
-      }
-    });
+    // Conversations endpoint deprecated
+    this.conversations.set([]);
+    this.isLoadingConversations.set(false);
   }
 
   nextPage(): void {
@@ -710,34 +666,14 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.loadConversations(agent.elevenAgentId || agent.id, 1, null);
   }
 
-  selectConversation(conversation: ConversationInfo): void {
+  selectConversation(conversation: any): void {
     this.selectedConversation.set(conversation);
     this.conversationDetails.set(null);
     this.conversationAnalysis.set(null);
 
     // Load conversation details
-    this.apiService.getConversationDetails(conversation.conversation_id).subscribe({
-      next: (details) => {
-        this.conversationDetails.set(details);
-
-        // Try to load existing analysis
-        this.apiService.getAnalysis(conversation.conversation_id).subscribe({
-          next: (analysis) => {
-            this.conversationAnalysis.set(analysis);
-          },
-          error: (err) => {
-            // Analysis doesn't exist yet, which is fine
-            if (err.status !== 404) {
-              console.error('Error loading analysis:', err);
-            }
-          }
-        });
-      },
-      error: (err) => {
-        console.error('Error loading conversation details:', err);
-        this.error.set(err.error?.detail || 'Failed to load conversation details');
-      }
-    });
+    // Feature deprecated
+    this.conversationDetails.set(null);
   }
 
   closeConversationModal(): void {
@@ -769,9 +705,9 @@ REASONING:
 ${analysis.analysis.reasoning}
 
 STRENGTHS:
-${analysis.analysis.strengths.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}
+${analysis.analysis.strengths.map((s: string, i: number) => `  ${i + 1}. ${s}`).join('\n')}
 
-${analysis.analysis.concerns.length > 0 ? `CONCERNS:\n${analysis.analysis.concerns.map((c, i) => `  ${i + 1}. ${c}`).join('\n')}` : 'CONCERNS: None identified'}
+${analysis.analysis.concerns.length > 0 ? `CONCERNS:\n${analysis.analysis.concerns.map((c: string, i: number) => `  ${i + 1}. ${c}`).join('\n')}` : 'CONCERNS: None identified'}
     `.trim();
 
     navigator.clipboard.writeText(textToCopy).then(() => {
@@ -784,23 +720,9 @@ ${analysis.analysis.concerns.length > 0 ? `CONCERNS:\n${analysis.analysis.concer
   }
 
   generateAnalysis(conversationId: string, forceRegenerate: boolean = false): void {
-    this.isLoadingAnalysis.set(true);
-    this.error.set(null);
-
-    this.apiService.generateAnalysis(conversationId, forceRegenerate).subscribe({
-      next: (analysis) => {
-        this.conversationAnalysis.set(analysis);
-        this.isLoadingAnalysis.set(false);
-
-        this.successMessage.set('Analysis generated successfully');
-        setTimeout(() => this.successMessage.set(''), 3000);
-      },
-      error: (err) => {
-        console.error('Error generating analysis:', err);
-        this.error.set(err.error?.detail || 'Failed to generate analysis');
-        this.isLoadingAnalysis.set(false);
-      }
-    });
+    // Feature deprecated
+    this.isLoadingAnalysis.set(false);
+    this.error.set('Analysis feature is currently unavailable');
   }
 
   formatDuration(seconds: number): string {

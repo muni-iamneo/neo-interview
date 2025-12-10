@@ -321,7 +321,7 @@
                     </svg>
                     <div class="detail-content">
                       <span class="detail-label-small">Started</span>
-                      <span class="detail-value-small">{{ formatTimestamp(link.started_at) }}</span>
+                      <span class="detail-value-small">{{ formatDate(link.started_at) }}</span>
                     </div>
                   </div>
                   <div class="detail-row" *ngIf="link.ended_at">
@@ -333,7 +333,7 @@
                     </svg>
                     <div class="detail-content">
                       <span class="detail-label-small">Ended</span>
-                      <span class="detail-value-small">{{ formatTimestamp(link.ended_at) }}</span>
+                      <span class="detail-value-small">{{ formatDate(link.ended_at) }}</span>
                     </div>
                   </div>
                 </div>
@@ -520,24 +520,9 @@
           <small>How long the link remains valid (default: 24 hours)</small>
         </div>
 
-        <div class="form-group">
-          <label>Job Description</label>
-          <textarea [(ngModel)]="linkJobDescription" [value]="linkJobDescription()"
-            (input)="linkJobDescription.set($any($event.target).value)" class="textarea" rows="4"
-            placeholder="Parsed Job Description here..."></textarea>
-        </div>
+        <!-- Job Description and Resume removed as they are not supported by the backend -->
 
-        <div class="form-group">
-          <label>Resume (Text)</label>
-          <textarea [(ngModel)]="linkResume" [value]="linkResume()" (input)="linkResume.set($any($event.target).value)"
-            class="textarea" rows="4" placeholder="Paste candidate resume text here..."></textarea>
-        </div>
-
-        <div class="form-group">
-          <label>Scheduled At (Optional)</label>
-          <input type="datetime-local" [(ngModel)]="scheduledAt" [value]="scheduledAt()"
-            (input)="scheduledAt.set($any($event.target).value)" class="form-control" />
-        </div>
+        <!-- Scheduled At removed as it is not supported by the backend -->
       </div>
 
       <div class="modal-footer">

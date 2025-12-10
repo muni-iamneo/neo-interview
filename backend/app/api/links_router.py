@@ -23,6 +23,8 @@ class CreateLinkRequest(BaseModel):
     agentId: str = Field(..., description="Agent ID to use for this interview")
     maxMinutes: Optional[int] = Field(None, description="Maximum interview duration in minutes")
     ttlMinutes: Optional[int] = Field(None, description="Link expiry time in minutes")
+    jobDescription: Optional[str] = Field(None, description="Job description context for the agent")
+    resume: Optional[str] = Field(None, description="Candidate resume context for the agent")
 
 
 class CreateLinkResponse(BaseModel):
@@ -84,11 +86,18 @@ async def create_link(request: CreateLinkRequest):
 
         session_id = link_data["sessionId"]
 
+        # Prepare dynamic variables from request
+        dynamic_vars = {}
+        if request.jobDescription:
+            dynamic_vars["job_description"] = request.jobDescription
+        if request.resume:
+            dynamic_vars["resume"] = request.resume
+
         # Set session config (in-memory) for when JWT is minted
         set_session_config(
             session_id=session_id,
             eleven_agent_id=agent.eleven_agent_id,
-            dynamic_variables={},
+            dynamic_variables=dynamic_vars,
             max_interview_minutes=request.maxMinutes or agent.max_interview_minutes,
             agent_id=request.agentId,  # Pass agent ID so voice endpoint can fetch voice_provider from Redis
         )

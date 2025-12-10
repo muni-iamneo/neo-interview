@@ -89,7 +89,12 @@ export class SessionManagementService {
       if (sessionInfo.canRejoin) {
         console.log('🔄 Session was dropped, attempting to resume...');
         try {
-          await this.apiService.resumeSession(this.sessionId()).toPromise();
+          await this.apiService.mintJWT({
+            room: this.sessionId(),
+            user: { name: 'Participant' },
+            sessionId: this.sessionId(),
+            rejoin: true
+          }).toPromise();
           console.log('✅ Session resumed');
           onResume('[INFO] Rejoined session after network drop\n');
           this.interviewStatus.set('active');
@@ -146,7 +151,7 @@ export class SessionManagementService {
 
     try {
       onUpdate('[INFO] Attempting to rejoin session...\n');
-      await this.apiService.resumeSession(this.sessionId()).toPromise();
+      // Resume logic handled by mintJWT (join) below
 
       // Check if we have JWT in sessionStorage
       const raw = sessionStorage.getItem('jaasSession');

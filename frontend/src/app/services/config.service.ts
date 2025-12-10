@@ -56,7 +56,8 @@ export class ConfigService {
    */
   getVoiceWebSocketUrl(sessionId: string, token?: string): string {
     const authToken = token || this.authService.getToken();
-    return `${this.WS_BASE_URL}/v1/ws/voice/${sessionId}?token=${encodeURIComponent(authToken)}`;
+    const teamId = this.authService.getTeamId();
+    return `${this.WS_BASE_URL}/v1/ws/voice/${sessionId}?token=${encodeURIComponent(authToken)}&x-team-id=${encodeURIComponent(teamId)}`;
   }
 
   /**
