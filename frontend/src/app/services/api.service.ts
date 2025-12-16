@@ -94,10 +94,11 @@ export interface UpdateAgentRequest {
 
 export interface CreateLinkRequest {
   agentId: string;
+  roomName?: string;
   maxMinutes?: number;
   ttlMinutes?: number;
   scheduledAt?: string;
-  jobDescription?: string;
+  job_description?: string;
   resume?: string;
 }
 
@@ -190,8 +191,8 @@ export class ApiService {
       ...(request.rejoin && { rejoin: request.rejoin }),
       ...(ttlSeconds !== undefined && { ttlSec: ttlSeconds }), // Note: backend expects ttlSec, not ttl_seconds for /join
       ...(request.modTok && { modTok: request.modTok }),
-      job_description: "Senior Backend Engineer position...",
-      resume: "https://storage.googleapis.com/neohire-prod-private-bucket/d6a5e1aa-c68e-45fe-ba36-dc6b4557e961/resume_cv/KAVIYASRIV1_1763987562696_cl5Omp.pdf?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=hire-infra-svc%40neohire-prod.iam.gserviceaccount.com%2F20251209%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251209T132245Z&X-Goog-Expires=300&X-Goog-SignedHeaders=host&X-Goog-Signature=2004e7ae25f94a3e8666fbea64f1a968e5781423d88d79d9a9447d5ab91cc8dfa50e0e175acadbb881f613493a2ffb8374a7278f8b510f7f210ad910991e60b97a72066e4d7a7488cbd15297e29e7e31db5f74d58710eb639ee790cd46279cdbc480598f706379b1bc06892743d2a87304bcb6f1fbe124bb61610df47d70aaf48a104bf7628afc1eb32730e22d9cbb50ea96785f749205b49fc34becf44ab7692e873af7b6b616c5c04a5902d8f72108e8c5a6e537718fdfee765fc3ee1b31d4d4cbf27b186b5a98d3a2e4e4991a1d020b68e5115236c1574552cd90abd11e1057fa510cc02300c10518b78188ad9cfbf10e25a0c27c3d3ad42d12fb6a2a31c3",
+      ...(request.job_description && { job_description: request.job_description }),
+      ...(request.resume && { resume: request.resume }),
       ...(request.agentId && { agent_id: request.agentId }),
       ...(request.dynamic_variables && { dynamic_variables: request.dynamic_variables })
     };
@@ -259,54 +260,9 @@ export class ApiService {
     );
   }
 
-  /**
-   * Get all active voice sessions
-   * Maps to: GET /v1/sessions
-   */
-  /**
-   * Get all active voice sessions
-   * Maps to: GET /v1/sessions
-   */
-  getVoiceSessions(page: number = 1, pageSize: number = 20): Observable<SessionsListResponse> {
-    return this.http.get<SessionsListResponse>(
-      this.config.getApiUrl(`/v1/sessions?page=${page}&page_size=${pageSize}`)
-    );
-  }
-
-  /**
-   * Get specific voice session status
-   * Maps to: GET /v1/sessions/{id}
-   */
-  getVoiceSessionStatus(sessionId: string): Observable<SessionInfo> {
-    return this.http.get<any>(
-      this.config.getApiUrl(`/v1/sessions/${sessionId}`)
-    ).pipe(
-      map(response => {
-        // Handle potentially wrapped response
-        const data = (response && response.data) ? response.data : response;
-        return this.transformSessionResponse(data);
-      })
-    );
-  }
-
-  private transformSessionResponse(data: any): SessionInfo {
-    return {
-      sessionId: data.id,
-      meetingId: data.meeting_id,
-      agentId: data.agent_id,
-      status: data.status,
-      // Logic for canRejoin based on status
-      canRejoin: (data.status === 'dropped' || data.status === 'paused'),
-      startTime: data.start_time ? new Date(data.start_time).getTime() : undefined,
-      endTime: data.end_time ? new Date(data.end_time).getTime() : undefined,
-      interviewStartTime: data.interview_start_time ? new Date(data.interview_start_time).getTime() : undefined,
-      maxInterviewMinutes: data.max_interview_minutes,
-      endReason: data.end_reason,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-      roomName: data.room_name
-    };
-  }
+  // DEPRECATED: Session list/get endpoints have been removed from the API
+  // Sessions are now auto-created when joining via interview links
+  // Use interview link endpoints instead
 
   /**
    * Health check
@@ -435,13 +391,8 @@ export class ApiService {
 
 
 
-  /**
-   * Get session information
-   * Maps to: GET /v1/sessions/{id} (same endpoint as getVoiceSessionStatus)
-   */
-  getSessionInfo(sessionId: string): Observable<SessionInfo> {
-    return this.getVoiceSessionStatus(sessionId);
-  }
+  // DEPRECATED: Session info endpoint removed from API
+  // Sessions are auto-created on join and info is returned in join response
 
 
 
@@ -454,10 +405,16 @@ export class ApiService {
   createLink(request: CreateLinkRequest): Observable<CreateLinkResponse> {
     // Transform request from camelCase to snake_case for microservice
     const apiRequest: any = {
-      agent_id: request.agentId,
-      max_interview_minutes: request.maxMinutes,
-      ttl_minutes: request.ttlMinutes
+      agent_id: request.agentId
     };
+    
+    // Add optional fields only if provided
+    if (request.roomName) apiRequest.roomName = request.roomName;
+    if (request.maxMinutes) apiRequest.max_interview_minutes = request.maxMinutes;
+    if (request.ttlMinutes) apiRequest.ttl_minutes = request.ttlMinutes;
+    if (request.scheduledAt) apiRequest.scheduledAt = request.scheduledAt;
+    if (request.job_description) apiRequest.job_description = request.job_description;
+    if (request.resume) apiRequest.resume = request.resume;
     
     return this.http.post<any>(
       this.config.getApiUrl('/v1/links'),
@@ -472,7 +429,7 @@ export class ApiService {
         }
         
         return {
-          interviewId: responseData.sessionId || responseData.interviewId || responseData.interview_id,
+          interviewId: responseData.interviewId || responseData.interview_id,
           roomName: responseData.roomName || responseData.room_name,
           expiresAt: responseData.expiresAt || responseData.expires_at,
           scheduledAt: responseData.scheduledAt || responseData.scheduled_at
@@ -480,6 +437,39 @@ export class ApiService {
       })
     );
   }
+
+  /**
+   * Update an existing interview link
+   * Maps to: PUT /v1/links/{interview_id}
+   */
+  updateLink(interviewId: string, updates: Partial<CreateLinkRequest>): Observable<CreateLinkResponse> {
+    const apiRequest: any = {};
+    
+    // Only include fields that are provided
+    if (updates.scheduledAt !== undefined) apiRequest.scheduledAt = updates.scheduledAt;
+    if (updates.maxMinutes !== undefined) apiRequest.max_interview_minutes = updates.maxMinutes;
+    if (updates.ttlMinutes !== undefined) apiRequest.ttl_minutes = updates.ttlMinutes;
+    
+    return this.http.put<any>(
+      this.config.getApiUrl(`/v1/links/${interviewId}`),
+      apiRequest
+    ).pipe(
+      map((response: any) => {
+        let responseData = response;
+        if (response && typeof response === 'object' && 'success' in response && 'data' in response) {
+          responseData = response.data;
+        }
+        
+        return {
+          interviewId: responseData.interviewId || responseData.interview_id,
+          roomName: responseData.roomName || responseData.room_name,
+          expiresAt: responseData.expiresAt || responseData.expires_at,
+          scheduledAt: responseData.scheduledAt || responseData.scheduled_at
+        };
+      })
+    );
+  }
+
 
   /**
    * Get link join info (simplified info for landing page)

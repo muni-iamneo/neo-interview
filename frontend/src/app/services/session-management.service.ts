@@ -58,7 +58,8 @@ export class SessionManagementService {
   }
 
   /**
-   * Check session status
+   * Check session status (DEPRECATED - sessions are auto-created on join)
+   * This method now only returns session info from local state
    */
   async checkSessionStatus(): Promise<SessionInfo | null> {
     const sessionId = this.sessionId();
@@ -67,18 +68,17 @@ export class SessionManagementService {
       return null;
     }
 
-    try {
-      const info = await this.apiService.getSessionInfo(sessionId).toPromise();
-      if (info) {
-        this.sessionInfo.set(info);
-        this.canRejoin.set(info.canRejoin === true);
-        this.interviewStatus.set(info.status || 'unknown');
-      }
-      return info || null;
-    } catch (err) {
-      console.warn('Could not fetch session status:', err);
-      return null;
+    // NOTE: GET /v1/sessions/{id} endpoint has been removed from API
+    // Sessions are now auto-created when joining via interview links
+    // Return cached session info if available
+    const cached = this.sessionInfo();
+    if (cached) {
+      console.log('Using cached session info (API endpoint deprecated)');
+      return cached;
     }
+
+    console.warn('Session status check endpoint deprecated - sessions are auto-created on join');
+    return null;
   }
 
   /**
@@ -98,12 +98,6 @@ export class SessionManagementService {
           console.log('✅ Session resumed');
           onResume('[INFO] Rejoined session after network drop\n');
           this.interviewStatus.set('active');
-
-          // Refresh session info
-          const updatedInfo = await this.checkSessionStatus();
-          if (updatedInfo) {
-            this.sessionInfo.set(updatedInfo);
-          }
         } catch (err) {
           console.error('Failed to resume session:', err);
         }
@@ -114,21 +108,16 @@ export class SessionManagementService {
   }
 
   /**
-   * Start periodic session info refresh
+   * Start periodic session info refresh (DEPRECATED)
+   * Session status polling is deprecated - sessions are auto-created on join
    */
   startSessionInfoRefresh(intervalMs: number = 10000): void {
+    console.warn('Session info refresh deprecated - sessions are auto-created on join');
+    // Clearing any existing interval to prevent errors
     if (this.sessionInfoInterval) {
       clearInterval(this.sessionInfoInterval);
+      this.sessionInfoInterval = null;
     }
-
-    this.sessionInfoInterval = setInterval(async () => {
-      const info = await this.checkSessionStatus();
-      if (info) {
-        this.sessionInfo.set(info);
-        this.canRejoin.set(info.canRejoin === true);
-        this.interviewStatus.set(info.status || '');
-      }
-    }, intervalMs);
   }
 
   /**
@@ -192,13 +181,6 @@ export class SessionManagementService {
       } else {
         onUpdate('[ERROR] No session found to rejoin\n');
         return false;
-      }
-
-      // Refresh session info
-      const updatedInfo = await this.checkSessionStatus();
-      if (updatedInfo) {
-        this.sessionInfo.set(updatedInfo);
-        this.interviewStatus.set(updatedInfo.status || '');
       }
 
       return true;

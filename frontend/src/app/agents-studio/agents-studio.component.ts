@@ -380,39 +380,15 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.isLoadingHistory.set(false);
   }
 
-  // Monitor voice session status
+  // DEPRECATED: Session status monitoring removed
+  // Sessions are now auto-created on join and GET /v1/sessions endpoints removed from API
   private monitorVoiceSession(): void {
+    console.warn('Session monitoring deprecated - sessions are auto-created on join');
+    // Clear any existing interval
     if (this.statusCheckInterval) {
       clearInterval(this.statusCheckInterval);
+      this.statusCheckInterval = null;
     }
-
-    const sessionId = sessionStorage.getItem('currentSessionId') || '';
-    if (!sessionId) {
-      return;
-    }
-
-    const checkStatus = () => {
-      this.apiService.getSessionInfo(sessionId).subscribe({
-        next: (info) => {
-          this.currentSessionInfo.set(info);
-        },
-        error: () => {
-          this.apiService.getVoiceSessionStatus(sessionId).subscribe({
-            next: (status) => {
-              if (status.status === 'active') {
-                console.log('✅ Voice session active');
-              }
-            },
-            error: () => {
-              this.currentSessionInfo.set(null);
-            }
-          });
-        }
-      });
-    };
-
-    checkStatus();
-    this.statusCheckInterval = setInterval(checkStatus, 5000);
   }
 
   formatTime(timestamp: number): string {
