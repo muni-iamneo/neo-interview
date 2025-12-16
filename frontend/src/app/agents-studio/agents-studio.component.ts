@@ -42,6 +42,10 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
   moderatorJoinUrl = signal<string>('');
   maxMinutes = signal<number | null>(null);
   ttlMinutes = signal<number | null>(null);
+  
+  // Scheduling fields (NEW)
+  scheduleMode = signal<'immediate' | 'scheduled'>('immediate');
+  scheduledDateTime = signal<string>(''); // ISO 8601 format
 
   // Tabs state
   activeTab = signal<'links' | 'details' | 'conversations'>('details');
@@ -218,7 +222,24 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
     this.showCreateModal.set(false);
     this.maxMinutes.set(null);
     this.ttlMinutes.set(null);
-    this.ttlMinutes.set(null);
+    this.scheduleMode.set('immediate'); // Reset to immediate
+    this.scheduledDateTime.set(''); // Clear scheduled time
+  }
+
+  getCurrentDateTime(): string {
+    // Returns current date-time in format required for datetime-local input (YYYY-MM-DDTHH:MM)
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+  
+  parseScheduledDateTime(value: string) {
+    // Convert datetime-local input value to ISO 8601
+    this.scheduledDateTime.set(new Date(value).toISOString());
   }
 
   closeLinkModal() {
@@ -235,6 +256,9 @@ export class AgentsStudioComponent implements OnInit, OnDestroy {
 
     const request: CreateLinkRequest = {
       agentId: agent.id,
+      scheduledAt: this.scheduleMode() === 'immediate' 
+        ? new Date().toISOString() 
+        : this.scheduledDateTime() || new Date().toISOString(),
       maxMinutes: this.maxMinutes() || undefined,
       ttlMinutes: this.ttlMinutes() || undefined
     };

@@ -1,9 +1,53 @@
-<!-- Silent redirect - no UI needed -->
-<div *ngIf="error()" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f5f5f5;">
-  <div style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; text-align: center;">
+<!-- Silent redirect - no UI needed unless there's an error or "too early" -->
+
+<!-- Too Early - Show Countdown Timer -->
+<div *ngIf="tooEarly()"
+  style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+  <div
+    style="background: white; padding: 50px; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 600px; text-align: center;">
+    <div style="font-size: 64px; margin-bottom: 20px;">⏰</div>
+    <h2 style="color: #333; margin: 0 0 16px 0; font-size: 28px;">Interview Not Started Yet</h2>
+    <p style="color: #666; margin-bottom: 30px; font-size: 16px;">
+      You're a bit early! The interview is scheduled to start soon.
+    </p>
+
+    <!-- Countdown Timer -->
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 12px; margin-bottom: 30px;">
+      <div style="font-size: 48px; font-weight: bold; color: #667eea; font-family: monospace; margin-bottom: 12px;">
+        {{ formatCountdown(startsInSeconds()) }}
+      </div>
+      <p style="color: #888; font-size: 14px; margin: 0;">until you can join</p>
+    </div>
+
+    <!-- Interview Details -->
+    <div style="text-align: left; background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="margin-bottom: 12px;">
+        <strong style="color: #333;">Scheduled Start:</strong>
+        <div style="color: #666; font-size: 14px; margin-top: 4px;">{{ formatDateTime(scheduledAt()) }}</div>
+      </div>
+      <div>
+        <strong style="color: #333;">You can join at:</strong>
+        <div style="color: #667eea; font-size: 14px; margin-top: 4px; font-weight: 600;">{{ formatDateTime(canJoinAt())
+          }}</div>
+        <div style="color: #888; font-size: 12px; margin-top: 4px;">(10 minutes before scheduled start)</div>
+      </div>
+    </div>
+
+    <p style="color: #888; font-size: 14px; margin: 0;">
+      ✨ This page will automatically redirect when the interview is ready to join
+    </p>
+  </div>
+</div>
+
+<!-- Error Display -->
+<div *ngIf="error() && !tooEarly()"
+  style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f5f5f5;">
+  <div
+    style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; text-align: center;">
     <h2 style="color: #dc3545; margin: 0 0 20px 0;">Unable to Join Interview</h2>
     <p style="color: #666; margin-bottom: 20px;">{{ error() }}</p>
-    <a href="/studio" style="display: inline-block; padding: 12px 24px; background: #4a90e2; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+    <a href="/studio"
+      style="display: inline-block; padding: 12px 24px; background: #4a90e2; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
       Go to Agents Studio
     </a>
   </div>

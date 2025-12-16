@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -11,12 +11,19 @@ import { ApiService, JWTRequest } from '../services/api.service';
   templateUrl: './join.component.html',
   styleUrls: ['./join.component.css'],
 })
-export class JoinComponent implements OnInit {
+export class JoinComponent implements OnInit, OnDestroy {
   interviewId = signal<string>('');
   candidateName = signal<string>('');
   loading = signal(false);
   error = signal<string | null>(null);
   ready = signal(false);
+  
+  // Join-time restriction UI state
+  tooEarly = signal(false);
+  scheduledAt = signal<string>('');
+  canJoinAt = signal<string>('');
+  startsInSeconds = signal<number>(0);
+  private countdownInterval: any = null;
 
   constructor(
     private route: ActivatedRoute,
@@ -78,9 +85,22 @@ export class JoinComponent implements OnInit {
       },
       error: (err) => {
         console.error('Error minting JWT:', err);
-        this.error.set(
-          err.error?.error || 'Failed to join interview. Please try again.'
-        );
+        
+        // Handle join-time restrictions
+        if (err.status === 425) {
+          // Too Early - show countdown
+          this.handleTooEarlyError(err.error);
+        } else if (err.status === 410) {
+          // Expired or ended
+          this.error.set(
+            err.error?.message || 'This interview link has expired or ended.'
+          );
+        } else {
+          this.error.set(
+            err.error?.error || 'Failed to join interview. Please try again.'
+          );
+        }
+        
         this.loading.set(false);
       },
     });
@@ -137,11 +157,77 @@ export class JoinComponent implements OnInit {
       },
       error: (err) => {
         console.error('Error minting JWT:', err);
-        this.error.set(
-          err.error?.error || 'Failed to join interview. Please try again.'
-        );
+        
+        // Handle join-time restrictions
+        if (err.status === 425) {
+          // Too Early - show countdown
+          this.handleTooEarlyError(err.error);
+        } else if (err.status === 410) {
+          // Expired or ended
+          this.error.set(
+            err.error?.message || 'This interview link has expired or ended.'
+          );
+        } else {
+          this.error.set(
+            err.error?.error || 'Failed to join interview. Please try again.'
+          );
+        }
+        
         this.loading.set(false);
       },
     });
+  }
+  
+  // Handle "Too Early" error with countdown
+  private handleTooEarlyError(errorData: any) {
+    this.tooEarly.set(true);
+    this.scheduledAt.set(errorData.scheduled_at || '');
+    this.canJoinAt.set(errorData.can_join_at || '');
+    this.startsInSeconds.set(errorData.starts_in_seconds || 0);
+    
+    // Start countdown
+    this.startCountdown();
+  }
+  
+  private startCountdown() {
+    // Clear any existing interval
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+    }
+    
+    this.countdownInterval = setInterval(() => {
+      const remaining = this.startsInSeconds() - 1;
+      
+      if (remaining <= 0) {
+        // Countdown finished - auto-retry join
+        clearInterval(this.countdownInterval);
+        this.countdownInterval = null;
+        this.tooEarly.set(false);
+        this.autoJoinInterview(this.interviewId());
+      } else {
+        this.startsInSeconds.set(remaining);
+      }
+    }, 1000);
+  }
+  
+  formatCountdown(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+  
+  formatDateTime(isoString: string): string {
+    if (!isoString) return '';
+    try {
+      return new Date(isoString).toLocaleString();
+    } catch {
+      return isoString;
+    }
+  }
+  
+  ngOnDestroy() {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+    }
   }
 }

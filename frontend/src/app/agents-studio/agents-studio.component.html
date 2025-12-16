@@ -520,9 +520,38 @@
           <small>How long the link remains valid (default: 24 hours)</small>
         </div>
 
-        <!-- Job Description and Resume removed as they are not supported by the backend -->
+        <!-- Interview Scheduling (NEW) -->
+        <div class="form-group">
+          <label>Interview Timing</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="scheduleMode" value="immediate" [checked]="scheduleMode() === 'immediate'"
+                (change)="scheduleMode.set('immediate')" />
+              <span class="radio-label">
+                <strong>Start Immediately</strong>
+                <small>Interview can start as soon as candidate joins</small>
+              </span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="scheduleMode" value="scheduled" [checked]="scheduleMode() === 'scheduled'"
+                (change)="scheduleMode.set('scheduled')" />
+              <span class="radio-label">
+                <strong>Schedule for Later</strong>
+                <small>Set a specific date and time for the interview</small>
+              </span>
+            </label>
+          </div>
+        </div>
 
-        <!-- Scheduled At removed as it is not supported by the backend -->
+        <div class="form-group" *ngIf="scheduleMode() === 'scheduled'">
+          <label>Scheduled Date & Time</label>
+          <input type="datetime-local" [value]="scheduledDateTime() ? scheduledDateTime().substring(0, 16) : ''"
+            (input)="parseScheduledDateTime($any($event.target).value)" class="form-control"
+            [min]="getCurrentDateTime()" required />
+          <small>Select when the interview should start (your local time)</small>
+        </div>
+
+        <!-- Job Description and Resume removed as they are not supported by the backend -->
       </div>
 
       <div class="modal-footer">

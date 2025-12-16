@@ -94,10 +94,10 @@ export interface UpdateAgentRequest {
 
 export interface CreateLinkRequest {
   agentId: string;
+  scheduledAt: string;       // REQUIRED: Interview scheduled start time (ISO 8601)
   roomName?: string;
   maxMinutes?: number;
   ttlMinutes?: number;
-  scheduledAt?: string;
   job_description?: string;
   resume?: string;
 }
@@ -405,14 +405,14 @@ export class ApiService {
   createLink(request: CreateLinkRequest): Observable<CreateLinkResponse> {
     // Transform request from camelCase to snake_case for microservice
     const apiRequest: any = {
-      agent_id: request.agentId
+      agent_id: request.agentId,
+      scheduledAt: request.scheduledAt  // REQUIRED field
     };
     
     // Add optional fields only if provided
     if (request.roomName) apiRequest.roomName = request.roomName;
     if (request.maxMinutes) apiRequest.max_interview_minutes = request.maxMinutes;
     if (request.ttlMinutes) apiRequest.ttl_minutes = request.ttlMinutes;
-    if (request.scheduledAt) apiRequest.scheduledAt = request.scheduledAt;
     if (request.job_description) apiRequest.job_description = request.job_description;
     if (request.resume) apiRequest.resume = request.resume;
     
